@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "442364965585",
+    "project_id": "edunotify-2a933",
+    "storage_bucket": "edunotify-2a933.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:442364965585:android:5bb02ef2da8feba4938bf0",
+        "android_client_info": {
+          "package_name": "com.example.edunotify"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCSaMp7a8jJ4K6x1KqsF8xPOXcAqQusBqc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
