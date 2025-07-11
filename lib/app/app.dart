@@ -1,3 +1,4 @@
+import 'package:edunotify/app/auth/wrapper.dart';
 import 'package:edunotify/app/home/home_screen.dart';
 import 'package:flutter/material.dart';
 
@@ -10,7 +11,7 @@ class MyApp extends StatelessWidget {
       title: 'Auth UI',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(useMaterial3: false),
-      home: HomeScreen(),
+      home: WrapperScreen(),
       // initialRoute: '/',
       // routes: {
       //   // '/': (_) => const WrapperScreen(),
