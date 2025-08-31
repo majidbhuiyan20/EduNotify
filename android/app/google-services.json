@@ -1,26 +1,43 @@
 {
   "project_info": {
-    "project_number": "319724109599",
-    "project_id": "edunotify-13c14",
-    "storage_bucket": "edunotify-13c14.firebasestorage.app"
+    "project_number": "680119873420",
+    "project_id": "edunotify-9738b",
+    "storage_bucket": "edunotify-9738b.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:319724109599:android:1f5b6d5bf1ca5c8e96ba2a",
+        "mobilesdk_app_id": "1:680119873420:android:9873866420ba5a84a930a9",
         "android_client_info": {
           "package_name": "com.example.edunotify"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "680119873420-tbnmg0k91kmqc02l99q6nvtmc8piu66p.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
-          "current_key": "AIzaSyDAGG3gKK6NDGj7wW08gUgqgwT2XRuDA0w"
+          "current_key": "AIzaSyBGNOphMJ7rv1Gyj9Wj2qvNSVfAbZbEPjc"
         }
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "680119873420-tbnmg0k91kmqc02l99q6nvtmc8piu66p.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "680119873420-bvt58ccvdh436c33lsid5lkng548u4fk.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.edunotify"
+              }
+            }
+          ]
         }
       }
     }

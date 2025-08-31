@@ -2,18 +2,22 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CLIENT_ID</key>
+	<string>680119873420-bvt58ccvdh436c33lsid5lkng548u4fk.apps.googleusercontent.com</string>
+	<key>REVERSED_CLIENT_ID</key>
+	<string>com.googleusercontent.apps.680119873420-bvt58ccvdh436c33lsid5lkng548u4fk</string>
 	<key>API_KEY</key>
-	<string>AIzaSyCF_0ngF3Uxqk3nn0Gr0_tgT7M-AN-jhvw</string>
+	<string>AIzaSyCCSiWxuvcMwKS2AFAJXrNuLpHN57FMUpc</string>
 	<key>GCM_SENDER_ID</key>
-	<string>319724109599</string>
+	<string>680119873420</string>
 	<key>PLIST_VERSION</key>
 	<string>1</string>
 	<key>BUNDLE_ID</key>
 	<string>com.example.edunotify</string>
 	<key>PROJECT_ID</key>
-	<string>edunotify-13c14</string>
+	<string>edunotify-9738b</string>
 	<key>STORAGE_BUCKET</key>
-	<string>edunotify-13c14.firebasestorage.app</string>
+	<string>edunotify-9738b.firebasestorage.app</string>
 	<key>IS_ADS_ENABLED</key>
 	<false></false>
 	<key>IS_ANALYTICS_ENABLED</key>
@@ -25,6 +29,6 @@
 	<key>IS_SIGNIN_ENABLED</key>
 	<true></true>
 	<key>GOOGLE_APP_ID</key>
-	<string>1:319724109599:ios:168d9550bb3ba6f796ba2a</string>
+	<string>1:680119873420:ios:cf0f3a1e68ada435a930a9</string>
 </dict>
 </plist>
