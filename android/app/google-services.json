@@ -14,6 +14,14 @@
       },
       "oauth_client": [
         {
+          "client_id": "680119873420-ridieem956gm9ee51ekdf1dtejeejee4.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.edunotify",
+            "certificate_hash": "a836a2f784a3e03ad978af661e40981a7dae051d"
+          }
+        },
+        {
           "client_id": "680119873420-tbnmg0k91kmqc02l99q6nvtmc8piu66p.apps.googleusercontent.com",
           "client_type": 3
         }

@@ -118,24 +118,28 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
   }
 
   Future<void> _signInWithGoogle() async {
+    if (_isGoogleLoading) return; // Prevent multiple clicks
+
     setState(() => _isGoogleLoading = true);
 
     try {
-      final GoogleSignIn googleSignIn = GoogleSignIn(scopes: ['email', 'profile']);
-      final GoogleSignInAccount? googleUser = await googleSignIn.signIn();
+      final googleSignIn = GoogleSignIn(
+        scopes: ['email', 'profile'],
+      );
 
+      final googleUser = await googleSignIn.signIn();
       if (googleUser == null) {
         Utils.toastMessage("Google Sign-In cancelled.");
         return;
       }
 
-      final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
-      final OAuthCredential credential = GoogleAuthProvider.credential(
+      final googleAuth = await googleUser.authentication;
+      final credential = GoogleAuthProvider.credential(
         accessToken: googleAuth.accessToken,
         idToken: googleAuth.idToken,
       );
 
-      final UserCredential userCredential = await _auth.signInWithCredential(credential);
+      final userCredential = await _auth.signInWithCredential(credential);
 
       if (userCredential.user != null) {
         final prefs = await SharedPreferences.getInstance();
@@ -143,23 +147,23 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
 
         Utils.toastMessage("Google Sign-In Successful");
 
-        if (mounted) {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (context) => const HomeScreen()),
-          );
-        }
+        if (!mounted) return;
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const HomeScreen()),
+        );
       }
     } on FirebaseAuthException catch (e) {
       Utils.toastMessage("Google Sign-In failed: ${e.message}");
-    } catch (e) {
-      Utils.toastMessage("An unexpected error occurred during Google Sign-In.");
+    } on Exception catch (e) {
+      Utils.toastMessage("Unexpected error: $e");
     } finally {
       if (mounted) {
         setState(() => _isGoogleLoading = false);
       }
     }
   }
+
 
   @override
   Widget build(BuildContext context) {
