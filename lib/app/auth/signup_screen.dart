@@ -30,7 +30,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
         await credential.user!.updateDisplayName(_nameController.text.trim());
         await credential.user!.reload();
 
-        Navigator.pushNamed(context, '/home');
+        Navigator.pushNamed(context, '/features');
       } on FirebaseAuthException catch (e) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(e.message ?? 'Registration failed')),

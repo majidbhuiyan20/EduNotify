@@ -1,5 +1,4 @@
 import 'package:edunotify/app/auth/wrapper.dart';
-import 'package:edunotify/app/home/home_screen.dart';
 import 'package:flutter/material.dart';
 
 class MyApp extends StatelessWidget {
@@ -15,7 +14,7 @@ class MyApp extends StatelessWidget {
       // initialRoute: '/',
       // routes: {
       //   // '/': (_) => const WrapperScreen(),
-      //   // '/home': (_) => const HomeScreen(),
+      //   // '/features': (_) => const HomeScreen(),
       //   // '/login': (_) => const LoginScreen(),
       //   // '/signup': (_) => const SignUpScreen(),
       // },
@@ -35,7 +34,7 @@ class MyApp extends StatelessWidget {
 // │   ├── login/
 // │   │   ├── login_screen.dart
 // │   │   └── login_view_model.dart
-// │   └── home/
+// │   └── features/
 // │       ├── home_screen.dart
 // │       └── home_view_model.dart
 // ├── models/

@@ -25,7 +25,7 @@ class _LoginScreenState extends State<LoginScreen> {
         password: _passwordController.text.trim(),
       );
 
-      Navigator.pushReplacementNamed(context, "/home");
+      Navigator.pushReplacementNamed(context, "/features");
     } on FirebaseAuthException catch (e) {
       String message;
       switch (e.code) {
