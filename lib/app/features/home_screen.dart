@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../auth/login_screen.dart';
+import '../schedule_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -15,7 +16,7 @@ class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
   final List<Widget> _screens = [
     const DashboardScreen(),
-   // const ScheduleScreen(),
+    const ScheduleScreen(),
     const AssignmentsScreen(),
     const NotificationsScreen(),
     SettingsScreen(),
