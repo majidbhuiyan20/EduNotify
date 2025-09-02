@@ -1,3 +1,4 @@
+import 'package:edunotify/app/features/assignment_screen.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -17,7 +18,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final List<Widget> _screens = [
     const DashboardScreen(),
     const ScheduleScreen(),
-    const AssignmentsScreen(),
+    const AssignmentScreen(),
     const NotificationsScreen(),
     SettingsScreen(),
   ];
@@ -25,27 +26,29 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          'Edu Notify',
-          style: GoogleFonts.poppins(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.notifications),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const NotificationsScreen(),
+      appBar: _currentIndex == 0
+          ? AppBar(
+              title: Text(
+                'Edu Notify',
+                style: GoogleFonts.poppins(
+                  fontWeight: FontWeight.bold,
                 ),
-              );
-            },
-          ),
-        ],
-      ),
+              ),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.notifications),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const NotificationsScreen(),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            )
+          : null,
       drawer: Drawer(
         child: ListView(
           padding: EdgeInsets.zero,
@@ -462,22 +465,6 @@ class DashboardScreen extends StatelessWidget {
     );
   }
 }
-
-
-class AssignmentsScreen extends StatelessWidget {
-  const AssignmentsScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Text(
-        'Assignments Screen',
-        style: GoogleFonts.poppins(fontSize: 24),
-      ),
-    );
-  }
-}
-
 class NotificationsScreen extends StatelessWidget {
   const NotificationsScreen({super.key});
 
