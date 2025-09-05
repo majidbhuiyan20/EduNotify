@@ -1,4 +1,5 @@
 import 'package:edunotify/app/features/assignment_screen.dart';
+import 'package:edunotify/app/features/notification_screen.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -19,7 +20,7 @@ class _HomeScreenState extends State<HomeScreen> {
     const DashboardScreen(),
     const ScheduleScreen(),
     const AssignmentScreen(),
-    const NotificationsScreen(),
+    const NotificationScreen(),
     SettingsScreen(),
   ];
 
@@ -41,7 +42,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (context) => const NotificationsScreen(),
+                        builder: (context) => const NotificationScreen(),
                       ),
                     );
                   },
@@ -471,19 +472,6 @@ class DashboardScreen extends StatelessWidget {
       title: Text(title, style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
       subtitle: Text(subtitle, style: GoogleFonts.poppins()),
       trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-    );
-  }
-}
-class NotificationsScreen extends StatelessWidget {
-  const NotificationsScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Text(
-        'Notifications Screen',
-        style: GoogleFonts.poppins(fontSize: 24),
-      ),
     );
   }
 }
