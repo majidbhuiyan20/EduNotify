@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../auth/login_screen.dart';
-import '../schedule_screen.dart';
+import 'schedule_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -49,6 +49,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             )
           : null,
+      ///Drawer Start here
       drawer: Drawer(
         child: ListView(
           padding: EdgeInsets.zero,
@@ -155,7 +156,12 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
       ),
+      ///Drawer Ends Here
+
+
       body: _screens[_currentIndex],
+
+      /// Bottom Navigation Start Here
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         type: BottomNavigationBarType.fixed,
@@ -190,6 +196,9 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
+      /// Bottom Navigation End Here
+
+
     );
   }
 }
