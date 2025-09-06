@@ -1,5 +1,6 @@
 import 'package:edunotify/app/features/assignment_screen.dart';
 import 'package:edunotify/app/features/notification_screen.dart';
+import 'package:edunotify/app/features/settings_screen.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -474,13 +475,4 @@ class DashboardScreen extends StatelessWidget {
       trailing: const Icon(Icons.arrow_forward_ios, size: 16),
     );
   }
-}
-
-class SettingsScreen extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    // TODO: implement build
-    throw UnimplementedError();
-  }
-
 }

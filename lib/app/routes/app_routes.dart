@@ -15,7 +15,7 @@ final GoRouter router = GoRouter(
     GoRoute(path: '/features', builder: (context, state) => HomeScreen()),
     GoRoute(path: '/login', builder: (context, state) => LoginScreen()),
     GoRoute(path: '/signup', builder: (context, state) => SignUpScreen()),
-    GoRoute(path: '/notification', builder: (context, state) => NotificationScreen(),
+    GoRoute(path: '/notification', builder: (context, state) => NotificationScreen()),
 
 
 
