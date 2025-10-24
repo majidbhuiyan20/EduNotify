@@ -1,6 +1,7 @@
 import 'package:edunotify/app/features/assignment_screen.dart';
 import 'package:edunotify/app/features/notification_screen.dart';
 import 'package:edunotify/app/features/settings_screen.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -16,6 +17,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  final User? user = FirebaseAuth.instance.currentUser;
   int _currentIndex = 0;
   final List<Widget> _screens = [
     const DashboardScreen(),
@@ -66,7 +68,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   CircleAvatar(
                     backgroundColor: Colors.white,
                     child: Text(
-                      'S',
+                      user?.displayName?.substring(0, 1) ?? 'U',
                       style: GoogleFonts.poppins(
                         fontSize: 24,
                         fontWeight: FontWeight.bold,
@@ -76,7 +78,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    'Sarah Johnson',
+                    user?.displayName ?? 'User Name',
                     style: GoogleFonts.poppins(
                       color: Colors.white,
                       fontSize: 18,
@@ -84,7 +86,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                   Text(
-                    'sarah@edu.com',
+                    user?.email ?? 'user@email.com',
                     style: GoogleFonts.poppins(
                       color: Colors.white70,
                     ),
@@ -146,12 +148,15 @@ class _HomeScreenState extends State<HomeScreen> {
             ListTile(
               leading: const Icon(Icons.exit_to_app),
               title: Text('Logout', style: GoogleFonts.poppins()),
-              onTap: () {
-                Navigator.pushReplacement(
+              onTap: () async {
+                await FirebaseAuth.instance.signOut();
+                if (!mounted) return;
+                Navigator.pushAndRemoveUntil(
                   context,
                   MaterialPageRoute(
                     builder: (context) => const LoginScreen(),
                   ),
+                  (route) => false,
                 );
               },
             ),
@@ -205,18 +210,24 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-class DashboardScreen extends StatelessWidget {
+class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
 
   @override
+  State<DashboardScreen> createState() => _DashboardScreenState();
+}
+
+class _DashboardScreenState extends State<DashboardScreen> {
+  @override
   Widget build(BuildContext context) {
+    final User? user = FirebaseAuth.instance.currentUser;
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Hello, Sarah!',
+            'Hello, ${user?.displayName?.split(' ').first ?? 'User'}!',
             style: GoogleFonts.poppins(
               fontSize: 24,
               fontWeight: FontWeight.bold,

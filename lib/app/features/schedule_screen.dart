@@ -165,6 +165,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
           final instanceClass = newClass.copyWith(
             id: '${newClass.id}_${classDate.millisecondsSinceEpoch}',
             baseClassId: newClass.id,
+            isRecurring: true,
           );
 
           // Add to local state
@@ -179,6 +180,32 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
           await _addClassToFirestore(instanceClass, classDate);
         }
       }
+
+      setState(() {});
+    } catch (e) {
+      _showErrorSnackBar('Failed to add class: $e');
+    }
+  }
+
+  Future<void> _addSingleClass(ClassEvent newClass, DateTime date) async {
+    try {
+      // Create a unique ID for the single class
+      final singleClass = newClass.copyWith(
+        id: 'single_${date.millisecondsSinceEpoch}',
+        baseClassId: 'single_${date.millisecondsSinceEpoch}',
+        isRecurring: false,
+      );
+
+      // Add to local state
+      final key = DateTime(date.year, date.month, date.day);
+      if (_events.containsKey(key)) {
+        _events[key]!.add(singleClass);
+      } else {
+        _events[key] = [singleClass];
+      }
+
+      // Add to Firestore
+      await _addClassToFirestore(singleClass, date);
 
       setState(() {});
     } catch (e) {
@@ -202,7 +229,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
 
       // Add to new date with updated date
       final updatedInstance = updatedClass.copyWith(
-        id: '${updatedClass.baseClassId}_${newDate.millisecondsSinceEpoch}',
+        id: updatedClass.isRecurring
+            ? '${updatedClass.baseClassId}_${newDate.millisecondsSinceEpoch}'
+            : 'single_${newDate.millisecondsSinceEpoch}',
       );
 
       final newKey = DateTime(newDate.year, newDate.month, newDate.day);
@@ -232,6 +261,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
       // Then add the updated class with new schedule
       final updatedBaseClass = updatedClass.copyWith(
         id: updatedClass.baseClassId, // Use the original base ID
+        isRecurring: true,
       );
 
       await _addClass(updatedBaseClass, newDate, recurringDays, weeks);
@@ -470,12 +500,56 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          _showAddClassDialog();
+      floatingActionButton: PopupMenuButton<String>(
+        offset: const Offset(0, -100),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        itemBuilder: (BuildContext context) => [
+          PopupMenuItem<String>(
+            value: 'single',
+            child: Row(
+              children: [
+                Icon(Icons.event, color: Colors.blue),
+                SizedBox(width: 12),
+                Text('Add Single Class'),
+              ],
+            ),
+          ),
+          PopupMenuItem<String>(
+            value: 'series',
+            child: Row(
+              children: [
+                Icon(Icons.repeat, color: Colors.green),
+                SizedBox(width: 12),
+                Text('Add Class Series'),
+              ],
+            ),
+          ),
+        ],
+        onSelected: (String value) {
+          if (value == 'single') {
+            _showAddSingleClassDialog();
+          } else if (value == 'series') {
+            _showAddClassSeriesDialog();
+          }
         },
-        backgroundColor: Colors.blue,
-        child: const Icon(Icons.add, color: Colors.white),
+        child: Container(
+          width: 56,
+          height: 56,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: LinearGradient(
+              colors: [Colors.blue.shade600, Colors.purple.shade600],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.blue.shade300.withOpacity(0.5),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: const Icon(Icons.add, color: Colors.white),
+        ),
       ),
     );
   }
@@ -583,6 +657,22 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                 color: Colors.grey,
               ),
             ),
+            if (event.isRecurring) ...[
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Icon(Icons.repeat, size: 12, color: Colors.green),
+                  SizedBox(width: 4),
+                  Text(
+                    'Recurring',
+                    style: GoogleFonts.poppins(
+                      fontSize: 10,
+                      color: Colors.green,
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
         trailing: PopupMenuButton<String>(
@@ -590,56 +680,61 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
           onSelected: (value) {
             if (value == 'edit_single') {
               _showEditSingleClassDialog(event: event, date: date);
-            } else if (value == 'edit_series') {
+            } else if (value == 'edit_series' && event.isRecurring) {
               _showEditSeriesDialog(event: event, date: date);
             } else if (value == 'delete') {
               _showDeleteConfirmation(event, date);
-            } else if (value == 'delete_all') {
+            } else if (value == 'delete_all' && event.isRecurring) {
               _showDeleteAllConfirmation(event);
             }
           },
-          itemBuilder: (BuildContext context) => [
-            PopupMenuItem<String>(
-              value: 'edit_single',
-              child: Row(
-                children: [
-                  Icon(Icons.edit, color: Colors.blue),
-                  SizedBox(width: 8),
-                  Text('Edit This Class'),
-                ],
+          itemBuilder: (BuildContext context) {
+            List<PopupMenuItem<String>> items = [
+              PopupMenuItem<String>(
+                value: 'edit_single',
+                child: Row(
+                  children: [
+                    Icon(Icons.edit, color: Colors.blue),
+                    SizedBox(width: 8),
+                    Text('Edit This Class'),
+                  ],
+                ),
               ),
-            ),
-            PopupMenuItem<String>(
-              value: 'edit_series',
-              child: Row(
-                children: [
-                  Icon(Icons.edit_calendar, color: Colors.green),
-                  SizedBox(width: 8),
-                  Text('Edit Entire Series'),
-                ],
+              if (event.isRecurring)
+                PopupMenuItem<String>(
+                  value: 'edit_series',
+                  child: Row(
+                    children: [
+                      Icon(Icons.edit_calendar, color: Colors.green),
+                      SizedBox(width: 8),
+                      Text('Edit Entire Series'),
+                    ],
+                  ),
+                ),
+              PopupMenuItem<String>(
+                value: 'delete',
+                child: Row(
+                  children: [
+                    Icon(Icons.delete, color: Colors.red),
+                    SizedBox(width: 8),
+                    Text('Delete This Class'),
+                  ],
+                ),
               ),
-            ),
-            PopupMenuItem<String>(
-              value: 'delete',
-              child: Row(
-                children: [
-                  Icon(Icons.delete, color: Colors.red),
-                  SizedBox(width: 8),
-                  Text('Delete This Class'),
-                ],
-              ),
-            ),
-            PopupMenuItem<String>(
-              value: 'delete_all',
-              child: Row(
-                children: [
-                  Icon(Icons.delete_forever, color: Colors.red),
-                  SizedBox(width: 8),
-                  Text('Delete All Series'),
-                ],
-              ),
-            ),
-          ],
+              if (event.isRecurring)
+                PopupMenuItem<String>(
+                  value: 'delete_all',
+                  child: Row(
+                    children: [
+                      Icon(Icons.delete_forever, color: Colors.red),
+                      SizedBox(width: 8),
+                      Text('Delete All Series'),
+                    ],
+                  ),
+                ),
+            ];
+            return items;
+          },
         ),
         onTap: () {
           _showClassDetails(event, date);
@@ -685,7 +780,10 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
               _getTypeText(event.type),
             ),
             _buildDetailRow(Icons.calendar_today, DateFormat('MMMM d, yyyy').format(date)),
-            _buildDetailRow(Icons.repeat, 'Weekly Recurring Class'),
+            _buildDetailRow(
+                Icons.repeat,
+                event.isRecurring ? 'Weekly Recurring Class' : 'Single Class'
+            ),
           ],
         ),
         actions: [
@@ -700,13 +798,14 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
             },
             child: const Text('Edit This Class'),
           ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _showEditSeriesDialog(event: event, date: date);
-            },
-            child: const Text('Edit Series'),
-          ),
+          if (event.isRecurring)
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _showEditSeriesDialog(event: event, date: date);
+              },
+              child: const Text('Edit Series'),
+            ),
         ],
       ),
     );
@@ -755,7 +854,14 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     }
   }
 
-  void _showAddClassDialog() {
+  void _showAddSingleClassDialog() {
+    _showClassDialog(
+      isEditing: false,
+      isSeries: false,
+    );
+  }
+
+  void _showAddClassSeriesDialog() {
     _showClassDialog(
       isEditing: false,
       isSeries: true,
@@ -828,7 +934,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
             title: Text(
               isEditing
                   ? (isSeries ? 'Edit Class Series' : 'Edit This Class')
-                  : 'Add New Class Series',
+                  : (isSeries ? 'Add New Class Series' : 'Add Single Class'),
               style: GoogleFonts.poppins(
                 fontWeight: FontWeight.bold,
               ),
@@ -896,7 +1002,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                     ),
                   ),
 
-                  if (isSeries || !isEditing) ...[
+                  // Show schedule settings only for series
+                  if (isSeries) ...[
                     SizedBox(height: 16),
                     Divider(),
                     SizedBox(height: 8),
@@ -961,7 +1068,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                         );
                       }),
                     ),
-                    if (isSeries && selectedDays.isEmpty) ...[
+                    if (selectedDays.isEmpty) ...[
                       SizedBox(height: 8),
                       Text(
                         'Please select at least one day',
@@ -998,7 +1105,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                         border: OutlineInputBorder(),
                       ),
                     ),
-                  ] else ...[
+                  ] else if (!isEditing) ...[
+                    // For single class, show only date selection
                     SizedBox(height: 16),
                     Divider(),
                     SizedBox(height: 8),
@@ -1057,6 +1165,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                           location: locationController.text,
                           instructor: instructorController.text,
                           type: selectedType,
+                          isRecurring: event.isRecurring,
                         );
 
                         if (isSeries) {
@@ -1073,8 +1182,14 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                           location: locationController.text,
                           instructor: instructorController.text,
                           type: selectedType,
+                          isRecurring: isSeries,
                         );
-                        await _addClass(newClass, tempSelectedDate, selectedDays, selectedWeeks);
+
+                        if (isSeries) {
+                          await _addClass(newClass, tempSelectedDate, selectedDays, selectedWeeks);
+                        } else {
+                          await _addSingleClass(newClass, tempSelectedDate);
+                        }
                       }
 
                       Navigator.pop(context);
@@ -1083,7 +1198,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                           content: Text(
                             isEditing
                                 ? (isSeries ? 'Class series updated successfully!' : 'Class updated successfully!')
-                                : 'Class series added successfully!',
+                                : (isSeries ? 'Class series added successfully!' : 'Class added successfully!'),
                           ),
                           backgroundColor: Colors.green,
                         ),
@@ -1098,13 +1213,15 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                     : null,
                 child: _isSaving
                     ? const SizedBox(
-                        height: 24,
-                        width: 24,
-                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3),
-                      )
+                  height: 24,
+                  width: 24,
+                  child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3),
+                )
                     : Text(
-                        isEditing ? (isSeries ? 'Update Series' : 'Update Class') : 'Add Series',
-                      ),
+                  isEditing
+                      ? (isSeries ? 'Update Series' : 'Update Class')
+                      : (isSeries ? 'Add Series' : 'Add Class'),
+                ),
               ),
             ],
           );
@@ -1172,52 +1289,52 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     bool _isDeleting = false;
 
     showDialog(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          return AlertDialog(
-            title: Text('Delete All Classes'),
-            content: Text('Are you sure you want to delete all instances of "${event.title}"?'),
-            actions: [
-              TextButton(
-                onPressed: _isDeleting ? null : () => Navigator.pop(context),
-                child: const Text('Cancel'),
-              ),
-              TextButton(
-                onPressed: _isDeleting ? null : () async {
-                  setDialogState(() {
-                    _isDeleting = true;
-                  });
-                  try {
-                    await _deleteAllClassInstances(event.baseClassId);
-                    _deleteAllInstances(event.baseClassId);
-                    Navigator.pop(context); // Pop the dialog
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('All class instances deleted successfully!'),
-                        backgroundColor: Colors.green,
-                      ),
-                    );
-                  } catch (e) {
+        context: context,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: Text('Delete All Classes'),
+              content: Text('Are you sure you want to delete all instances of "${event.title}"?'),
+              actions: [
+                TextButton(
+                  onPressed: _isDeleting ? null : () => Navigator.pop(context),
+                  child: const Text('Cancel'),
+                ),
+                TextButton(
+                  onPressed: _isDeleting ? null : () async {
                     setDialogState(() {
-                      _isDeleting = false;
+                      _isDeleting = true;
                     });
-                    _showErrorSnackBar('Failed to delete class series: $e');
-                  }
-                },
-                style: TextButton.styleFrom(foregroundColor: Colors.red),
-                child: _isDeleting
-                    ? const SizedBox(
-                  height: 20,
-                  width: 20,
-                  child: CircularProgressIndicator(strokeWidth: 3),
-                )
-                    : const Text('Delete All'),
-              ),
-            ],
-          );
-        },
-      )
+                    try {
+                      await _deleteAllClassInstances(event.baseClassId);
+                      _deleteAllInstances(event.baseClassId);
+                      Navigator.pop(context); // Pop the dialog
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('All class instances deleted successfully!'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    } catch (e) {
+                      setDialogState(() {
+                        _isDeleting = false;
+                      });
+                      _showErrorSnackBar('Failed to delete class series: $e');
+                    }
+                  },
+                  style: TextButton.styleFrom(foregroundColor: Colors.red),
+                  child: _isDeleting
+                      ? const SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(strokeWidth: 3),
+                  )
+                      : const Text('Delete All'),
+                ),
+              ],
+            );
+          },
+        )
     );
   }
 }
@@ -1230,6 +1347,7 @@ class ClassEvent {
   final String location;
   final String instructor;
   final ClassType type;
+  final bool isRecurring;
 
   ClassEvent({
     required this.id,
@@ -1239,6 +1357,7 @@ class ClassEvent {
     required this.location,
     required this.instructor,
     required this.type,
+    this.isRecurring = false,
   });
 
   ClassEvent copyWith({
@@ -1249,6 +1368,7 @@ class ClassEvent {
     String? location,
     String? instructor,
     ClassType? type,
+    bool? isRecurring,
   }) {
     return ClassEvent(
       id: id ?? this.id,
@@ -1258,6 +1378,7 @@ class ClassEvent {
       location: location ?? this.location,
       instructor: instructor ?? this.instructor,
       type: type ?? this.type,
+      isRecurring: isRecurring ?? this.isRecurring,
     );
   }
 
@@ -1271,6 +1392,7 @@ class ClassEvent {
       'instructor': instructor,
       'type': type.index,
       'date': Timestamp.fromDate(date),
+      'isRecurring': isRecurring,
       'createdAt': FieldValue.serverTimestamp(),
     };
   }
@@ -1284,6 +1406,7 @@ class ClassEvent {
       location: map['location'] ?? '',
       instructor: map['instructor'] ?? '',
       type: ClassType.values[map['type'] ?? 0],
+      isRecurring: map['isRecurring'] ?? false,
     );
   }
 }
