@@ -46,7 +46,28 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     });
   }
 
-  void _editClass(ClassEvent updatedClass, DateTime originalDate, DateTime newDate, List<int> recurringDays, int weeks) {
+  void _editSingleClass(ClassEvent updatedClass, DateTime originalDate, DateTime newDate) {
+    setState(() {
+      // Remove from original date
+      final originalKey = DateTime(originalDate.year, originalDate.month, originalDate.day);
+      if (_events.containsKey(originalKey)) {
+        _events[originalKey]!.removeWhere((event) => event.id == updatedClass.id);
+        if (_events[originalKey]!.isEmpty) {
+          _events.remove(originalKey);
+        }
+      }
+
+      // Add to new date with the SAME ID (not creating new one)
+      final newKey = DateTime(newDate.year, newDate.month, newDate.day);
+      if (_events.containsKey(newKey)) {
+        _events[newKey]!.add(updatedClass); // Keep the same ID
+      } else {
+        _events[newKey] = [updatedClass]; // Keep the same ID
+      }
+    });
+  }
+
+  void _editClassSeries(ClassEvent updatedClass, DateTime originalDate, DateTime newDate, List<int> recurringDays, int weeks) {
     // First remove all instances of this class
     _deleteAllInstances(updatedClass.id.split('_')[0]);
 
@@ -348,6 +369,10 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
         bgColor = Colors.purple.withOpacity(0.1);
         icon = Icons.forum;
         break;
+      case ClassType.seminar:
+        bgColor = Colors.teal.withOpacity(0.1);
+        icon = Icons.record_voice_over;
+        break;
     }
 
     return Container(
@@ -390,8 +415,10 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
         trailing: PopupMenuButton<String>(
           icon: Icon(Icons.more_vert, color: Colors.grey[600]),
           onSelected: (value) {
-            if (value == 'edit') {
-              _showAddClassDialog(event: event, date: date);
+            if (value == 'edit_single') {
+              _showEditSingleClassDialog(event: event, date: date);
+            } else if (value == 'edit_series') {
+              _showEditSeriesDialog(event: event, date: date);
             } else if (value == 'delete') {
               _showDeleteConfirmation(event, date);
             } else if (value == 'delete_all') {
@@ -400,12 +427,22 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
           },
           itemBuilder: (BuildContext context) => [
             PopupMenuItem<String>(
-              value: 'edit',
+              value: 'edit_single',
               child: Row(
                 children: [
                   Icon(Icons.edit, color: Colors.blue),
                   SizedBox(width: 8),
-                  Text('Edit Series'),
+                  Text('Edit This Class'),
+                ],
+              ),
+            ),
+            PopupMenuItem<String>(
+              value: 'edit_series',
+              child: Row(
+                children: [
+                  Icon(Icons.edit_calendar, color: Colors.green),
+                  SizedBox(width: 8),
+                  Text('Edit Entire Series'),
                 ],
               ),
             ),
@@ -448,6 +485,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
         return Colors.orange;
       case ClassType.discussion:
         return Colors.purple;
+      case ClassType.seminar:
+        return Colors.teal;
     }
   }
 
@@ -484,7 +523,14 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
           TextButton(
             onPressed: () {
               Navigator.pop(context);
-              _showAddClassDialog(event: event, date: date);
+              _showEditSingleClassDialog(event: event, date: date);
+            },
+            child: const Text('Edit This Class'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _showEditSeriesDialog(event: event, date: date);
             },
             child: const Text('Edit Series'),
           ),
@@ -516,6 +562,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
         return Icons.group;
       case ClassType.discussion:
         return Icons.forum;
+      case ClassType.seminar:
+        return Icons.record_voice_over;
     }
   }
 
@@ -529,11 +577,42 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
         return 'Tutorial';
       case ClassType.discussion:
         return 'Discussion';
+      case ClassType.seminar:
+        return 'Seminar';
     }
   }
 
-  void _showAddClassDialog({ClassEvent? event, DateTime? date}) {
-    final isEditing = event != null;
+  void _showAddClassDialog() {
+    _showClassDialog(
+      isEditing: false,
+      isSeries: true,
+    );
+  }
+
+  void _showEditSingleClassDialog({required ClassEvent event, required DateTime date}) {
+    _showClassDialog(
+      isEditing: true,
+      isSeries: false,
+      event: event,
+      date: date,
+    );
+  }
+
+  void _showEditSeriesDialog({required ClassEvent event, required DateTime date}) {
+    _showClassDialog(
+      isEditing: true,
+      isSeries: true,
+      event: event,
+      date: date,
+    );
+  }
+
+  void _showClassDialog({
+    required bool isEditing,
+    required bool isSeries,
+    ClassEvent? event,
+    DateTime? date,
+  }) {
     final selectedDate = date ?? _selectedDay!;
 
     TextEditingController titleController = TextEditingController(text: event?.title ?? '');
@@ -543,16 +622,41 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
 
     ClassType selectedType = event?.type ?? ClassType.lecture;
     DateTime tempSelectedDate = selectedDate;
-    List<int> selectedDays = [selectedDate.weekday]; // Default to selected day
-    int selectedWeeks = 24; // Default to 24 weeks (~6 months)
+    List<int> selectedDays = [selectedDate.weekday];
+    int selectedWeeks = 24;
+
+    // Track form validation
+    bool isFormValid = false;
+
+    void validateForm() {
+      final bool fieldsFilled = titleController.text.isNotEmpty &&
+          timeController.text.isNotEmpty &&
+          locationController.text.isNotEmpty &&
+          instructorController.text.isNotEmpty;
+
+      final bool daysSelected = !isSeries || selectedDays.isNotEmpty;
+
+      isFormValid = fieldsFilled && daysSelected;
+    }
+
+    // Initialize validation
+    validateForm();
 
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
+
+          void updateState() {
+            setDialogState(() {});
+            validateForm();
+          }
+
           return AlertDialog(
             title: Text(
-              isEditing ? 'Edit Class Series' : 'Add New Class Series',
+              isEditing
+                  ? (isSeries ? 'Edit Class Series' : 'Edit This Class')
+                  : 'Add New Class Series',
               style: GoogleFonts.poppins(
                 fontWeight: FontWeight.bold,
               ),
@@ -566,7 +670,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                     decoration: InputDecoration(
                       labelText: 'Class Title',
                       border: OutlineInputBorder(),
+                      errorText: titleController.text.isEmpty ? 'Class title is required' : null,
                     ),
+                    onChanged: (value) => updateState(),
                   ),
                   SizedBox(height: 12),
                   TextField(
@@ -574,7 +680,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                     decoration: InputDecoration(
                       labelText: 'Time (e.g., 9:00 AM - 10:30 AM)',
                       border: OutlineInputBorder(),
+                      errorText: timeController.text.isEmpty ? 'Time is required' : null,
                     ),
+                    onChanged: (value) => updateState(),
                   ),
                   SizedBox(height: 12),
                   TextField(
@@ -582,7 +690,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                     decoration: InputDecoration(
                       labelText: 'Room Number/Location',
                       border: OutlineInputBorder(),
+                      errorText: locationController.text.isEmpty ? 'Location is required' : null,
                     ),
+                    onChanged: (value) => updateState(),
                   ),
                   SizedBox(height: 12),
                   TextField(
@@ -590,7 +700,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                     decoration: InputDecoration(
                       labelText: 'Professor Name',
                       border: OutlineInputBorder(),
+                      errorText: instructorController.text.isEmpty ? 'Professor name is required' : null,
                     ),
+                    onChanged: (value) => updateState(),
                   ),
                   SizedBox(height: 12),
                   DropdownButtonFormField<ClassType>(
@@ -611,92 +723,141 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                       border: OutlineInputBorder(),
                     ),
                   ),
-                  SizedBox(height: 16),
-                  Divider(),
-                  SizedBox(height: 8),
-                  Text(
-                    'Schedule Settings',
-                    style: GoogleFonts.poppins(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
+
+                  // Show schedule settings only for series editing or new class
+                  if (isSeries || !isEditing) ...[
+                    SizedBox(height: 16),
+                    Divider(),
+                    SizedBox(height: 8),
+                    Text(
+                      'Schedule Settings',
+                      style: GoogleFonts.poppins(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
                     ),
-                  ),
-                  SizedBox(height: 12),
-                  ListTile(
-                    title: Text('Start Date: ${DateFormat('MMM d, yyyy').format(tempSelectedDate)}'),
-                    trailing: Icon(Icons.calendar_today),
-                    onTap: () async {
-                      final DateTime? picked = await showDatePicker(
-                        context: context,
-                        initialDate: tempSelectedDate,
-                        firstDate: DateTime.now(),
-                        lastDate: DateTime.now().add(Duration(days: 365)),
-                      );
-                      if (picked != null) {
-                        setDialogState(() {
-                          tempSelectedDate = picked;
-                          // Update selected days to include the new date's weekday
-                          if (!selectedDays.contains(picked.weekday)) {
-                            selectedDays = [picked.weekday];
-                          }
-                        });
-                      }
-                    },
-                  ),
-                  SizedBox(height: 12),
-                  Text(
-                    'Repeat on Days:',
-                    style: GoogleFonts.poppins(
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    children: List.generate(7, (index) {
-                      final day = index + 1; // 1=Monday, 7=Sunday
-                      final isSelected = selectedDays.contains(day);
-                      return FilterChip(
-                        label: Text(_getDayName(day)),
-                        selected: isSelected,
-                        onSelected: (selected) {
+                    SizedBox(height: 12),
+                    ListTile(
+                      title: Text('Start Date: ${DateFormat('MMM d, yyyy').format(tempSelectedDate)}'),
+                      trailing: Icon(Icons.calendar_today),
+                      onTap: () async {
+                        final DateTime? picked = await showDatePicker(
+                          context: context,
+                          initialDate: tempSelectedDate,
+                          firstDate: DateTime.now(),
+                          lastDate: DateTime.now().add(Duration(days: 365)),
+                        );
+                        if (picked != null) {
                           setDialogState(() {
-                            if (selected) {
-                              selectedDays.add(day);
-                            } else {
-                              selectedDays.remove(day);
+                            tempSelectedDate = picked;
+                            if (!selectedDays.contains(picked.weekday)) {
+                              selectedDays = [picked.weekday];
                             }
-                            selectedDays.sort();
+                            validateForm();
                           });
-                        },
-                      );
-                    }),
-                  ),
-                  SizedBox(height: 12),
-                  Text(
-                    'Duration:',
-                    style: GoogleFonts.poppins(
-                      fontWeight: FontWeight.w500,
+                        }
+                      },
                     ),
-                  ),
-                  SizedBox(height: 8),
-                  DropdownButtonFormField<int>(
-                    value: selectedWeeks,
-                    onChanged: (int? newValue) {
-                      setDialogState(() {
-                        selectedWeeks = newValue!;
-                      });
-                    },
-                    items: [12, 16, 20, 24, 28, 32].map((weeks) {
-                      return DropdownMenuItem<int>(
-                        value: weeks,
-                        child: Text('$weeks weeks (${(weeks / 4).toStringAsFixed(1)} months)'),
-                      );
-                    }).toList(),
-                    decoration: InputDecoration(
-                      border: OutlineInputBorder(),
+                    SizedBox(height: 12),
+                    Text(
+                      'Repeat on Days:',
+                      style: GoogleFonts.poppins(
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
-                  ),
+                    SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      children: List.generate(7, (index) {
+                        final day = index + 1;
+                        final isSelected = selectedDays.contains(day);
+                        return FilterChip(
+                          label: Text(_getDayName(day)),
+                          selected: isSelected,
+                          onSelected: isEditing && !isSeries
+                              ? null // Disable for single class edit
+                              : (selected) {
+                            setDialogState(() {
+                              if (selected) {
+                                selectedDays.add(day);
+                              } else {
+                                selectedDays.remove(day);
+                              }
+                              selectedDays.sort();
+                              validateForm();
+                            });
+                          },
+                        );
+                      }),
+                    ),
+                    if (isSeries && selectedDays.isEmpty) ...[
+                      SizedBox(height: 8),
+                      Text(
+                        'Please select at least one day',
+                        style: TextStyle(
+                          color: Colors.red,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                    SizedBox(height: 12),
+                    Text(
+                      'Duration:',
+                      style: GoogleFonts.poppins(
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    SizedBox(height: 8),
+                    DropdownButtonFormField<int>(
+                      value: selectedWeeks,
+                      onChanged: isEditing && !isSeries
+                          ? null // Disable for single class edit
+                          : (int? newValue) {
+                        setDialogState(() {
+                          selectedWeeks = newValue!;
+                        });
+                      },
+                      items: [12, 16, 20, 24, 28, 32].map((weeks) {
+                        return DropdownMenuItem<int>(
+                          value: weeks,
+                          child: Text('$weeks weeks (${(weeks / 4).toStringAsFixed(1)} months)'),
+                        );
+                      }).toList(),
+                      decoration: InputDecoration(
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ] else ...[
+                    // For single class edit, show only date selection
+                    SizedBox(height: 16),
+                    Divider(),
+                    SizedBox(height: 8),
+                    Text(
+                      'Class Date',
+                      style: GoogleFonts.poppins(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                    SizedBox(height: 12),
+                    ListTile(
+                      title: Text('Date: ${DateFormat('MMM d, yyyy').format(tempSelectedDate)}'),
+                      trailing: Icon(Icons.calendar_today),
+                      onTap: () async {
+                        final DateTime? picked = await showDatePicker(
+                          context: context,
+                          initialDate: tempSelectedDate,
+                          firstDate: DateTime.now(),
+                          lastDate: DateTime.now().add(Duration(days: 365)),
+                        );
+                        if (picked != null) {
+                          setDialogState(() {
+                            tempSelectedDate = picked;
+                          });
+                        }
+                      },
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -706,45 +867,58 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                 child: const Text('Cancel'),
               ),
               ElevatedButton(
-                onPressed: () {
+                onPressed: isFormValid ? () {
                   if (titleController.text.isNotEmpty &&
                       timeController.text.isNotEmpty &&
                       locationController.text.isNotEmpty &&
                       instructorController.text.isNotEmpty &&
-                      selectedDays.isNotEmpty) {
-
-                    final newClass = ClassEvent(
-                      id: isEditing ? event!.id.split('_')[0] : DateTime.now().millisecondsSinceEpoch.toString(),
-                      title: titleController.text,
-                      time: timeController.text,
-                      location: locationController.text,
-                      instructor: instructorController.text,
-                      type: selectedType,
-                    );
+                      (isSeries ? selectedDays.isNotEmpty : true)) {
 
                     if (isEditing) {
-                      _editClass(newClass, selectedDate, tempSelectedDate, selectedDays, selectedWeeks);
+                      final updatedClass = ClassEvent(
+                        id: event!.id, // Keep the SAME ID for single class edit
+                        title: titleController.text,
+                        time: timeController.text,
+                        location: locationController.text,
+                        instructor: instructorController.text,
+                        type: selectedType,
+                      );
+
+                      if (isSeries) {
+                        _editClassSeries(updatedClass, selectedDate, tempSelectedDate, selectedDays, selectedWeeks);
+                      } else {
+                        _editSingleClass(updatedClass, selectedDate, tempSelectedDate);
+                      }
                     } else {
+                      final newClass = ClassEvent(
+                        id: DateTime.now().millisecondsSinceEpoch.toString(),
+                        title: titleController.text,
+                        time: timeController.text,
+                        location: locationController.text,
+                        instructor: instructorController.text,
+                        type: selectedType,
+                      );
                       _addClass(newClass, tempSelectedDate, selectedDays, selectedWeeks);
                     }
 
                     Navigator.pop(context);
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content: Text(isEditing ? 'Class series updated successfully!' : 'Class series added successfully!'),
+                        content: Text(
+                          isEditing
+                              ? (isSeries ? 'Class series updated successfully!' : 'Class updated successfully!')
+                              : 'Class series added successfully!',
+                        ),
                         backgroundColor: Colors.green,
                       ),
                     );
-                  } else {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Please fill all fields and select at least one day!'),
-                        backgroundColor: Colors.red,
-                      ),
-                    );
                   }
-                },
-                child: Text(isEditing ? 'Update Series' : 'Add Series'),
+                } : null,
+                child: Text(
+                  isEditing
+                      ? (isSeries ? 'Update Series' : 'Update Class')
+                      : 'Add Series',
+                ),
               ),
             ],
           );
@@ -868,4 +1042,5 @@ enum ClassType {
   lab,
   tutorial,
   discussion,
+  seminar,
 }
