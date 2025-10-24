@@ -44,7 +44,7 @@ class _WrapperScreenState extends State<WrapperScreen> {
             }
 
             // 🔹 Case 4: No Firestore data found → RoleSelectionScreen
-            debugPrint("No Firestore user data found for ${user.email}");
+            debugPrint("No Firestore user data found foruffff ${user.email}");
             return  RoleSelectionScreen();
           },
         );

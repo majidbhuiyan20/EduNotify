@@ -1,3 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
@@ -16,39 +18,180 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;
   final Map<DateTime, List<ClassEvent>> _events = {};
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  String? _currentUserId;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     _selectedDay = _focusedDay;
-    // Remove the sample events initialization
+    _currentUserId = _auth.currentUser?.uid;
+    _loadUserClasses();
+  }
+
+  Future<void> _loadUserClasses() async {
+    if (_currentUserId == null) return;
+
+    try {
+      final snapshot = await _firestore
+          .collection('users')
+          .doc(_currentUserId)
+          .collection('classes')
+          .orderBy('date')
+          .get();
+
+      setState(() {
+        _events.clear();
+        for (final doc in snapshot.docs) {
+          final data = doc.data();
+          final classEvent = ClassEvent.fromMap(data);
+          final date = (data['date'] as Timestamp).toDate();
+          final key = DateTime(date.year, date.month, date.day);
+
+          if (_events.containsKey(key)) {
+            _events[key]!.add(classEvent);
+          } else {
+            _events[key] = [classEvent];
+          }
+        }
+      });
+    } catch (e) {
+      print('Error loading classes: $e');
+      _showErrorSnackBar('Failed to load classes');
+    }
+  }
+
+  Future<void> _addClassToFirestore(ClassEvent event, DateTime date) async {
+    if (_currentUserId == null) {
+      _showErrorSnackBar('Please sign in to add classes');
+      return;
+    }
+
+    try {
+      await _firestore
+          .collection('users')
+          .doc(_currentUserId)
+          .collection('classes')
+          .add(event.toMap(date));
+    } catch (e) {
+      print('Error adding class: $e');
+      throw e;
+    }
+  }
+
+  Future<void> _updateClassInFirestore(ClassEvent event, DateTime date) async {
+    if (_currentUserId == null) return;
+
+    try {
+      // Find the document ID for this class
+      final snapshot = await _firestore
+          .collection('users')
+          .doc(_currentUserId)
+          .collection('classes')
+          .where('id', isEqualTo: event.id)
+          .get();
+
+      if (snapshot.docs.isNotEmpty) {
+        await snapshot.docs.first.reference.update(event.toMap(date));
+      }
+    } catch (e) {
+      print('Error updating class: $e');
+      throw e;
+    }
+  }
+
+  Future<void> _deleteClassFromFirestore(String classId) async {
+    if (_currentUserId == null) return;
+
+    try {
+      final snapshot = await _firestore
+          .collection('users')
+          .doc(_currentUserId)
+          .collection('classes')
+          .where('id', isEqualTo: classId)
+          .get();
+
+      for (final doc in snapshot.docs) {
+        await doc.reference.delete();
+      }
+    } catch (e) {
+      print('Error deleting class: $e');
+      throw e;
+    }
+  }
+
+  Future<void> _deleteAllClassInstances(String baseClassId) async {
+    if (_currentUserId == null) return;
+
+    try {
+      final snapshot = await _firestore
+          .collection('users')
+          .doc(_currentUserId)
+          .collection('classes')
+          .where('baseClassId', isEqualTo: baseClassId)
+          .get();
+
+      for (final doc in snapshot.docs) {
+        await doc.reference.delete();
+      }
+    } catch (e) {
+      print('Error deleting class series: $e');
+      throw e;
+    }
+  }
+
+  void _showErrorSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red,
+      ),
+    );
   }
 
   List<ClassEvent> _getEventsForDay(DateTime day) {
     return _events[DateTime(day.year, day.month, day.day)] ?? [];
   }
 
-  void _addClass(ClassEvent newClass, DateTime startDate, List<int> recurringDays, int weeks) {
-    setState(() {
+  Future<void> _addClass(ClassEvent newClass, DateTime startDate, List<int> recurringDays, int weeks) async {
+    try {
       for (int week = 0; week < weeks; week++) {
         for (int day in recurringDays) {
           DateTime classDate = startDate.add(Duration(days: (week * 7) + (day - startDate.weekday) % 7));
-          final key = DateTime(classDate.year, classDate.month, classDate.day);
 
+          // Create a unique ID for each instance but keep track of the series
+          final instanceClass = newClass.copyWith(
+            id: '${newClass.id}_${classDate.millisecondsSinceEpoch}',
+            baseClassId: newClass.id,
+          );
+
+          // Add to local state
+          final key = DateTime(classDate.year, classDate.month, classDate.day);
           if (_events.containsKey(key)) {
-            _events[key]!.add(newClass.copyWith(id: '${newClass.id}_${key.millisecondsSinceEpoch}'));
+            _events[key]!.add(instanceClass);
           } else {
-            _events[key] = [newClass.copyWith(id: '${newClass.id}_${key.millisecondsSinceEpoch}')];
+            _events[key] = [instanceClass];
           }
+
+          // Add to Firestore
+          await _addClassToFirestore(instanceClass, classDate);
         }
       }
-    });
+
+      setState(() {});
+    } catch (e) {
+      _showErrorSnackBar('Failed to add class: $e');
+    }
   }
 
-  void _editSingleClass(ClassEvent updatedClass, DateTime originalDate, DateTime newDate) {
-    setState(() {
-      // Remove from original date
+  Future<void> _editSingleClass(ClassEvent updatedClass, DateTime originalDate, DateTime newDate) async {
+    try {
+      // Remove from original date in Firestore
+      await _deleteClassFromFirestore(updatedClass.id);
+
+      // Update local state
       final originalKey = DateTime(originalDate.year, originalDate.month, originalDate.day);
       if (_events.containsKey(originalKey)) {
         _events[originalKey]!.removeWhere((event) => event.id == updatedClass.id);
@@ -57,26 +200,52 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
         }
       }
 
-      // Add to new date with the SAME ID (not creating new one)
+      // Add to new date with updated date
+      final updatedInstance = updatedClass.copyWith(
+        id: '${updatedClass.baseClassId}_${newDate.millisecondsSinceEpoch}',
+      );
+
       final newKey = DateTime(newDate.year, newDate.month, newDate.day);
       if (_events.containsKey(newKey)) {
-        _events[newKey]!.add(updatedClass); // Keep the same ID
+        _events[newKey]!.add(updatedInstance);
       } else {
-        _events[newKey] = [updatedClass]; // Keep the same ID
+        _events[newKey] = [updatedInstance];
       }
-    });
+
+      // Add to Firestore
+      await _addClassToFirestore(updatedInstance, newDate);
+
+      setState(() {});
+    } catch (e) {
+      _showErrorSnackBar('Failed to update class: $e');
+    }
   }
 
-  void _editClassSeries(ClassEvent updatedClass, DateTime originalDate, DateTime newDate, List<int> recurringDays, int weeks) {
-    // First remove all instances of this class
-    _deleteAllInstances(updatedClass.id.split('_')[0]);
+  Future<void> _editClassSeries(ClassEvent updatedClass, DateTime originalDate, DateTime newDate, List<int> recurringDays, int weeks) async {
+    try {
+      // First remove all instances from Firestore
+      await _deleteAllClassInstances(updatedClass.baseClassId);
 
-    // Then add the updated class with new schedule
-    _addClass(updatedClass, newDate, recurringDays, weeks);
+      // Then remove from local state
+      _deleteAllInstances(updatedClass.baseClassId);
+
+      // Then add the updated class with new schedule
+      final updatedBaseClass = updatedClass.copyWith(
+        id: updatedClass.baseClassId, // Use the original base ID
+      );
+
+      await _addClass(updatedBaseClass, newDate, recurringDays, weeks);
+    } catch (e) {
+      _showErrorSnackBar('Failed to update class series: $e');
+    }
   }
 
-  void _deleteClass(String classId, DateTime date) {
-    setState(() {
+  Future<void> _deleteClass(String classId, DateTime date) async {
+    try {
+      // Remove from Firestore
+      await _deleteClassFromFirestore(classId);
+
+      // Remove from local state
       final key = DateTime(date.year, date.month, date.day);
       if (_events.containsKey(key)) {
         _events[key]!.removeWhere((event) => event.id == classId);
@@ -84,13 +253,17 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
           _events.remove(key);
         }
       }
-    });
+
+      setState(() {});
+    } catch (e) {
+      _showErrorSnackBar('Failed to delete class: $e');
+    }
   }
 
   void _deleteAllInstances(String baseClassId) {
     setState(() {
       _events.forEach((key, events) {
-        events.removeWhere((event) => event.id.startsWith('${baseClassId}_'));
+        events.removeWhere((event) => event.baseClassId == baseClassId);
       });
       _events.removeWhere((key, events) => events.isEmpty);
     });
@@ -123,7 +296,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
             children: [
               TableCalendar(
                 firstDay: DateTime.now().subtract(const Duration(days: 30)),
-                lastDay: DateTime.now().add(const Duration(days: 180)), // 6 months
+                lastDay: DateTime.now().add(const Duration(days: 180)),
                 focusedDay: _focusedDay,
                 calendarFormat: _calendarFormat,
                 eventLoader: _getEventsForDay,
@@ -625,7 +798,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     List<int> selectedDays = [selectedDate.weekday];
     int selectedWeeks = 24;
 
-    // Track form validation
+    bool _isSaving = false;
     bool isFormValid = false;
 
     void validateForm() {
@@ -639,15 +812,14 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
       isFormValid = fieldsFilled && daysSelected;
     }
 
-    // Initialize validation
     validateForm();
 
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
-
-          void updateState() {
+          void updateState({bool isSaving = false}) {
+            _isSaving = isSaving;
             setDialogState(() {});
             validateForm();
           }
@@ -724,7 +896,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                     ),
                   ),
 
-                  // Show schedule settings only for series editing or new class
                   if (isSeries || !isEditing) ...[
                     SizedBox(height: 16),
                     Divider(),
@@ -775,7 +946,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                           label: Text(_getDayName(day)),
                           selected: isSelected,
                           onSelected: isEditing && !isSeries
-                              ? null // Disable for single class edit
+                              ? null
                               : (selected) {
                             setDialogState(() {
                               if (selected) {
@@ -811,7 +982,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                     DropdownButtonFormField<int>(
                       value: selectedWeeks,
                       onChanged: isEditing && !isSeries
-                          ? null // Disable for single class edit
+                          ? null
                           : (int? newValue) {
                         setDialogState(() {
                           selectedWeeks = newValue!;
@@ -828,7 +999,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                       ),
                     ),
                   ] else ...[
-                    // For single class edit, show only date selection
                     SizedBox(height: 16),
                     Divider(),
                     SizedBox(height: 8),
@@ -867,58 +1037,74 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                 child: const Text('Cancel'),
               ),
               ElevatedButton(
-                onPressed: isFormValid ? () {
+                style: ElevatedButton.styleFrom(minimumSize: const Size(120, 40)),
+                onPressed: isFormValid
+                    ? () async {
                   if (titleController.text.isNotEmpty &&
                       timeController.text.isNotEmpty &&
                       locationController.text.isNotEmpty &&
                       instructorController.text.isNotEmpty &&
                       (isSeries ? selectedDays.isNotEmpty : true)) {
 
-                    if (isEditing) {
-                      final updatedClass = ClassEvent(
-                        id: event!.id, // Keep the SAME ID for single class edit
-                        title: titleController.text,
-                        time: timeController.text,
-                        location: locationController.text,
-                        instructor: instructorController.text,
-                        type: selectedType,
-                      );
+                    try {
+                      updateState(isSaving: true);
+                      if (isEditing) {
+                        final updatedClass = ClassEvent(
+                          id: event!.id,
+                          baseClassId: event.baseClassId,
+                          title: titleController.text,
+                          time: timeController.text,
+                          location: locationController.text,
+                          instructor: instructorController.text,
+                          type: selectedType,
+                        );
 
-                      if (isSeries) {
-                        _editClassSeries(updatedClass, selectedDate, tempSelectedDate, selectedDays, selectedWeeks);
+                        if (isSeries) {
+                          await _editClassSeries(updatedClass, selectedDate, tempSelectedDate, selectedDays, selectedWeeks);
+                        } else {
+                          await _editSingleClass(updatedClass, selectedDate, tempSelectedDate);
+                        }
                       } else {
-                        _editSingleClass(updatedClass, selectedDate, tempSelectedDate);
+                        final newClass = ClassEvent(
+                          id: DateTime.now().millisecondsSinceEpoch.toString(),
+                          baseClassId: DateTime.now().millisecondsSinceEpoch.toString(),
+                          title: titleController.text,
+                          time: timeController.text,
+                          location: locationController.text,
+                          instructor: instructorController.text,
+                          type: selectedType,
+                        );
+                        await _addClass(newClass, tempSelectedDate, selectedDays, selectedWeeks);
                       }
-                    } else {
-                      final newClass = ClassEvent(
-                        id: DateTime.now().millisecondsSinceEpoch.toString(),
-                        title: titleController.text,
-                        time: timeController.text,
-                        location: locationController.text,
-                        instructor: instructorController.text,
-                        type: selectedType,
-                      );
-                      _addClass(newClass, tempSelectedDate, selectedDays, selectedWeeks);
-                    }
 
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          isEditing
-                              ? (isSeries ? 'Class series updated successfully!' : 'Class updated successfully!')
-                              : 'Class series added successfully!',
+                      Navigator.pop(context);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            isEditing
+                                ? (isSeries ? 'Class series updated successfully!' : 'Class updated successfully!')
+                                : 'Class series added successfully!',
+                          ),
+                          backgroundColor: Colors.green,
                         ),
-                        backgroundColor: Colors.green,
-                      ),
-                    );
+                      );
+                      updateState(isSaving: false);
+                    } catch (e) {
+                      updateState(isSaving: false);
+                      _showErrorSnackBar('Failed to save class: $e');
+                    }
                   }
-                } : null,
-                child: Text(
-                  isEditing
-                      ? (isSeries ? 'Update Series' : 'Update Class')
-                      : 'Add Series',
-                ),
+                }
+                    : null,
+                child: _isSaving
+                    ? const SizedBox(
+                        height: 24,
+                        width: 24,
+                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3),
+                      )
+                    : Text(
+                        isEditing ? (isSeries ? 'Update Series' : 'Update Class') : 'Add Series',
+                      ),
               ),
             ],
           );
@@ -929,14 +1115,22 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
 
   String _getDayName(int weekday) {
     switch (weekday) {
-      case 1: return 'Mon';
-      case 2: return 'Tue';
-      case 3: return 'Wed';
-      case 4: return 'Thu';
-      case 5: return 'Fri';
-      case 6: return 'Sat';
-      case 7: return 'Sun';
-      default: return '';
+      case 1:
+        return 'Mon';
+      case 2:
+        return 'Tue';
+      case 3:
+        return 'Wed';
+      case 4:
+        return 'Thu';
+      case 5:
+        return 'Fri';
+      case 6:
+        return 'Sat';
+      case 7:
+        return 'Sun';
+      default:
+        return '';
     }
   }
 
@@ -952,15 +1146,19 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () {
-              _deleteClass(event.id, date);
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Class deleted successfully!'),
-                  backgroundColor: Colors.green,
-                ),
-              );
+            onPressed: () async {
+              try {
+                await _deleteClass(event.id, date);
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Class deleted successfully!'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              } catch (e) {
+                _showErrorSnackBar('Failed to delete class: $e');
+              }
             },
             style: TextButton.styleFrom(foregroundColor: Colors.red),
             child: const Text('Delete'),
@@ -971,38 +1169,62 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
   }
 
   void _showDeleteAllConfirmation(ClassEvent event) {
+    bool _isDeleting = false;
+
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Delete All Classes'),
-        content: Text('Are you sure you want to delete all instances of "${event.title}"?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              _deleteAllInstances(event.id.split('_')[0]);
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('All class instances deleted successfully!'),
-                  backgroundColor: Colors.green,
-                ),
-              );
-            },
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Delete All'),
-          ),
-        ],
-      ),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            title: Text('Delete All Classes'),
+            content: Text('Are you sure you want to delete all instances of "${event.title}"?'),
+            actions: [
+              TextButton(
+                onPressed: _isDeleting ? null : () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: _isDeleting ? null : () async {
+                  setDialogState(() {
+                    _isDeleting = true;
+                  });
+                  try {
+                    await _deleteAllClassInstances(event.baseClassId);
+                    _deleteAllInstances(event.baseClassId);
+                    Navigator.pop(context); // Pop the dialog
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('All class instances deleted successfully!'),
+                        backgroundColor: Colors.green,
+                      ),
+                    );
+                  } catch (e) {
+                    setDialogState(() {
+                      _isDeleting = false;
+                    });
+                    _showErrorSnackBar('Failed to delete class series: $e');
+                  }
+                },
+                style: TextButton.styleFrom(foregroundColor: Colors.red),
+                child: _isDeleting
+                    ? const SizedBox(
+                  height: 20,
+                  width: 20,
+                  child: CircularProgressIndicator(strokeWidth: 3),
+                )
+                    : const Text('Delete All'),
+              ),
+            ],
+          );
+        },
+      )
     );
   }
 }
 
 class ClassEvent {
   final String id;
+  final String baseClassId;
   final String title;
   final String time;
   final String location;
@@ -1011,6 +1233,7 @@ class ClassEvent {
 
   ClassEvent({
     required this.id,
+    required this.baseClassId,
     required this.title,
     required this.time,
     required this.location,
@@ -1020,6 +1243,7 @@ class ClassEvent {
 
   ClassEvent copyWith({
     String? id,
+    String? baseClassId,
     String? title,
     String? time,
     String? location,
@@ -1028,11 +1252,38 @@ class ClassEvent {
   }) {
     return ClassEvent(
       id: id ?? this.id,
+      baseClassId: baseClassId ?? this.baseClassId,
       title: title ?? this.title,
       time: time ?? this.time,
       location: location ?? this.location,
       instructor: instructor ?? this.instructor,
       type: type ?? this.type,
+    );
+  }
+
+  Map<String, dynamic> toMap(DateTime date) {
+    return {
+      'id': id,
+      'baseClassId': baseClassId,
+      'title': title,
+      'time': time,
+      'location': location,
+      'instructor': instructor,
+      'type': type.index,
+      'date': Timestamp.fromDate(date),
+      'createdAt': FieldValue.serverTimestamp(),
+    };
+  }
+
+  factory ClassEvent.fromMap(Map<String, dynamic> map) {
+    return ClassEvent(
+      id: map['id'] ?? '',
+      baseClassId: map['baseClassId'] ?? map['id']?.split('_')[0] ?? '',
+      title: map['title'] ?? '',
+      time: map['time'] ?? '',
+      location: map['location'] ?? '',
+      instructor: map['instructor'] ?? '',
+      type: ClassType.values[map['type'] ?? 0],
     );
   }
 }
