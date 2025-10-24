@@ -1,5 +1,10 @@
+import 'dart:math';
+
+import 'package:edunotify/app/features/home_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class CreateClassRoomScreen extends StatefulWidget {
   const CreateClassRoomScreen({super.key});
@@ -14,6 +19,9 @@ class _CreateClassRoomScreenState extends State<CreateClassRoomScreen> {
   final _formKey = GlobalKey<FormState>();
   bool _isCreating = false;
 
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+
   @override
   void dispose() {
     _classCodeController.dispose();
@@ -21,27 +29,62 @@ class _CreateClassRoomScreenState extends State<CreateClassRoomScreen> {
     super.dispose();
   }
 
-  void _createClassroom() async {
+  Future<void> _createClassroom() async {
     if (_formKey.currentState!.validate()) {
       setState(() {
         _isCreating = true;
       });
 
-      // Simulate API call
-      await Future.delayed(const Duration(seconds: 2));
+      try {
+        User? user = _auth.currentUser;
 
-      setState(() {
-        _isCreating = false;
-      });
+        if (user == null) {
+          _showErrorDialog('Please sign in to create a classroom');
+          return;
+        }
 
-      // Show success dialog
-      _showSuccessDialog();
+        // Check if class code already exists
+        final classCodeExists = await _firestore
+            .collection('classrooms')
+            .where('classCode', isEqualTo: _classCodeController.text.trim())
+            .get()
+            .then((snapshot) => snapshot.docs.isNotEmpty);
+
+        if (classCodeExists) {
+          _showErrorDialog('Class code already exists. Please choose a different code.');
+          return;
+        }
+
+        // Create classroom document
+        await _firestore.collection('classrooms').add({
+          'className': _classNameController.text.trim(),
+          'classCode': _classCodeController.text.trim().toUpperCase(),
+          'createdBy': user.uid,
+          'createdByEmail': user.email,
+          'createdAt': FieldValue.serverTimestamp(),
+          'teacherName': user.displayName ?? 'Unknown Teacher',
+          'students': [], // Empty list for students to join
+          'assignments': [], // Empty list for assignments
+          'isActive': true,
+        });
+
+        // Show success dialog
+        _showSuccessDialog();
+
+      } catch (e) {
+        _showErrorDialog('Failed to create classroom: $e');
+      } finally {
+        setState(() {
+          _isCreating = false;
+        });
+      }
     }
   }
 
   void _showSuccessDialog() {
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (context) => Dialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         child: Padding(
@@ -75,7 +118,7 @@ class _CreateClassRoomScreenState extends State<CreateClassRoomScreen> {
               ),
               const SizedBox(height: 10),
               Text(
-                'Classroom "${_classNameController.text}" with code "${_classCodeController.text}" has been created successfully.',
+                'Classroom "${_classNameController.text}" with code "${_classCodeController.text.toUpperCase()}" has been created successfully.',
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   fontSize: 16,
@@ -89,8 +132,7 @@ class _CreateClassRoomScreenState extends State<CreateClassRoomScreen> {
                 height: 50,
                 child: ElevatedButton(
                   onPressed: () {
-                    Navigator.pop(context);
-                    Navigator.pop(context);
+                    Navigator.pushReplacement(context, MaterialPageRoute(builder: (_)=> HomeScreen())); // Go back to previous screen
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.green,
@@ -110,6 +152,42 @@ class _CreateClassRoomScreenState extends State<CreateClassRoomScreen> {
         ),
       ),
     );
+  }
+
+  void _showErrorDialog(String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.error, color: Colors.red),
+            SizedBox(width: 8),
+            Text('Error', style: TextStyle(color: Colors.red)),
+          ],
+        ),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Generate a random class code if needed
+  void _generateClassCode() {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    final random = Random();
+    final code = String.fromCharCodes(
+      Iterable.generate(
+        6,
+            (_) => chars.codeUnitAt(random.nextInt(chars.length)),
+      ),
+    );
+    _classCodeController.text = code;
   }
 
   @override
@@ -355,13 +433,29 @@ class _CreateClassRoomScreenState extends State<CreateClassRoomScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Class Code',
-          style: TextStyle(
-            fontWeight: FontWeight.w600,
-            color: Colors.grey[700],
-            fontSize: 14,
-          ),
+        Row(
+          children: [
+            Text(
+              'Class Code',
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                color: Colors.grey[700],
+                fontSize: 14,
+              ),
+            ),
+            const Spacer(),
+            GestureDetector(
+              onTap: _generateClassCode,
+              child: Text(
+                'Generate Code',
+                style: TextStyle(
+                  color: Colors.blue.shade600,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 8),
         Container(
@@ -387,6 +481,9 @@ class _CreateClassRoomScreenState extends State<CreateClassRoomScreen> {
               }
               return null;
             },
+            inputFormatters: [
+              UpperCaseTextFormatter(),
+            ],
             decoration: InputDecoration(
               hintText: 'e.g., CSE31',
               prefixIcon: Container(
@@ -410,7 +507,7 @@ class _CreateClassRoomScreenState extends State<CreateClassRoomScreen> {
               fillColor: Colors.white,
               contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
             ),
-            style: const TextStyle(fontSize: 16),
+            style: const TextStyle(fontSize: 16, letterSpacing: 1.2),
           ),
         ),
       ],
@@ -528,7 +625,8 @@ class _CreateClassRoomScreenState extends State<CreateClassRoomScreen> {
           ),
           const SizedBox(height: 12),
           _buildTipItem('Use a clear and descriptive class name'),
-          _buildTipItem('You can always edit these details later'),
+          _buildTipItem('Class codes must be unique and at least 4 characters'),
+          _buildTipItem('Share the class code with students to join'),
         ],
       ),
     );
@@ -556,3 +654,16 @@ class _CreateClassRoomScreenState extends State<CreateClassRoomScreen> {
     );
   }
 }
+
+// Text formatter to convert text to uppercase
+class UpperCaseTextFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+      TextEditingValue oldValue, TextEditingValue newValue) {
+    return TextEditingValue(
+      text: newValue.text.toUpperCase(),
+      selection: newValue.selection,
+    );
+  }
+}
+
