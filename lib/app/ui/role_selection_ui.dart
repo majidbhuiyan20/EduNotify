@@ -274,46 +274,36 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
       height: 56,
       margin: EdgeInsets.only(top: 20),
       child: ElevatedButton(
-        onPressed: selectedRole != null
-            ? () {
-          onPressed: selectedRole != null
-              ? () async {
-            try {
-              // Get the logged-in user
-              final user = FirebaseAuth.instance.currentUser;
-              if (user != null) {
-                // Save role to Firestore
-                await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-                  'email': user.email,
-                  'role': selectedRole,
-                  'createdAt': FieldValue.serverTimestamp(),
-                }, SetOptions(merge: true));
+        onPressed: selectedRole != null ? () async {
+          try {
+            // Get the logged-in user
+            final user = FirebaseAuth.instance.currentUser;
+            if (user != null) {
+              // Save role to Firestore
+              await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+                'email': user.email,
+                'role': selectedRole,
+                'createdAt': FieldValue.serverTimestamp(),
+              }, SetOptions(merge: true));
 
-                // Navigate to home
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(builder: (context) => const HomeScreen()),
-                );
-              } else {
-                // If user is not logged in (safety check)
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('User not logged in')),
-                );
-              }
-            } catch (e) {
-              print('Error saving role: $e');
+              // Navigate to home
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(builder: (context) => const HomeScreen()),
+              );
+            } else {
+              // If user is not logged in (safety check)
               ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Failed to save role: $e')),
+                const SnackBar(content: Text('User not logged in')),
               );
             }
+          } catch (e) {
+            print('Error saving role: $e');
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Failed to save role: $e')),
+            );
           }
-              : null;
-
-          // Handle role selection and navigation
-          print('Selected role: $selectedRole');
-          // Navigator.push(...);
-        }
-            : null,
+        } : null,
         style: ElevatedButton.styleFrom(
           backgroundColor: Colors.white,
           foregroundColor: Color(0xFF667eea),
