@@ -668,7 +668,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
       trailing: const Icon(Icons.arrow_forward_ios, size: 16),
       onTap: () {
-        // You can add navigation to class details here
+        widget.onNavigate(1); // Navigate to Schedule screen (index 1)
       },
     );
   }
@@ -682,12 +682,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             title: 'Add Class',
             color: Colors.green,
             onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const ScheduleScreen(),
-                ),
-              );
+              widget.onNavigate(1); // Navigate to Schedule screen (index 1)
             },
           ),
         ),
