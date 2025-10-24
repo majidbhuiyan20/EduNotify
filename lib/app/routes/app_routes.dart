@@ -3,6 +3,7 @@ import 'package:edunotify/app/auth/signup_screen.dart';
 import 'package:edunotify/app/auth/wrapper.dart';
 import 'package:edunotify/app/features/notification_screen.dart';
 import 'package:edunotify/app/features/onboarding/onboarding_screen.dart';
+import 'package:edunotify/app/ui/role_selection_ui.dart';
 import 'package:go_router/go_router.dart';
 
 import '../features/home_screen.dart';
@@ -16,6 +17,9 @@ final GoRouter router = GoRouter(
     GoRoute(path: '/login', builder: (context, state) => LoginScreen()),
     GoRoute(path: '/signup', builder: (context, state) => SignUpScreen()),
     GoRoute(path: '/notification', builder: (context, state) => NotificationScreen()),
+    GoRoute(path: '/roleSelection', builder: (context, state) => RoleSelectionScreen()),
+
+
 
 
 
