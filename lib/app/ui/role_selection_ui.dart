@@ -1,10 +1,11 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:edunotify/app/ui/add_class_room_screen.dart';
 import 'package:edunotify/app/ui/create_class_room_screen.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../features/home_screen.dart';
+// import '../features/home_screen.dart'; // No longer used
 
 class RoleSelectionScreen extends StatefulWidget {
   @override
@@ -287,11 +288,19 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
                 'createdAt': FieldValue.serverTimestamp(),
               }, SetOptions(merge: true));
 
-              // Navigate to home
-              Navigator.pushReplacement(
-                context,
-                MaterialPageRoute(builder: (context) => const CreateClassRoomScreen()),
-              );
+              if (selectedRole == 'Teacher' || selectedRole == 'CR') {
+                // Navigate to Create Classroom Screen
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(builder: (context) => const CreateClassRoomScreen()),
+                );
+              } else {
+                // Navigate to Add Classroom Screen for Students
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(builder: (context) => const AddClassRoomScreen()),
+                );
+              }
             } else {
               // If user is not logged in (safety check)
               ScaffoldMessenger.of(context).showSnackBar(
