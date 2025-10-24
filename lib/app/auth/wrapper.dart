@@ -30,7 +30,7 @@ class _WrapperScreenState extends State<WrapperScreen> {
                   AsyncSnapshot<DocumentSnapshot> documentSnapshot) {
                 if (documentSnapshot.connectionState == ConnectionState.done) {
                   if (documentSnapshot.data != null && documentSnapshot.data!.exists) {
-                    return HomeScreen();
+                    return RoleSelectionScreen();
                   }
                   return RoleSelectionScreen();
                 }

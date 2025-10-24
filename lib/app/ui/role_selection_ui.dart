@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:edunotify/app/ui/create_class_room_screen.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -289,7 +290,7 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
               // Navigate to home
               Navigator.pushReplacement(
                 context,
-                MaterialPageRoute(builder: (context) => const HomeScreen()),
+                MaterialPageRoute(builder: (context) => const CreateClassRoomScreen()),
               );
             } else {
               // If user is not logged in (safety check)
@@ -331,5 +332,4 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
   }
 
 }
-
 
