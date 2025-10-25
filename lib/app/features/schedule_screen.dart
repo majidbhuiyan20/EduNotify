@@ -36,9 +36,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
 
     try {
       final snapshot = await _firestore
-          .collection('users')
-          .doc(_currentUserId)
           .collection('classes')
+          .where('uid', isEqualTo: _currentUserId)
           .orderBy('date')
           .get();
 
@@ -71,10 +70,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
 
     try {
       await _firestore
-          .collection('users')
-          .doc(_currentUserId)
           .collection('classes')
-          .add(event.toMap(date));
+          .add({
+        ...event.toMap(date),
+        'uid': _currentUserId, // Add uid field
+      });
     } catch (e) {
       print('Error adding class: $e');
       throw e;
@@ -87,14 +87,16 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     try {
       // Find the document ID for this class
       final snapshot = await _firestore
-          .collection('users')
-          .doc(_currentUserId)
           .collection('classes')
+          .where('uid', isEqualTo: _currentUserId)
           .where('id', isEqualTo: event.id)
           .get();
 
       if (snapshot.docs.isNotEmpty) {
-        await snapshot.docs.first.reference.update(event.toMap(date));
+        await snapshot.docs.first.reference.update({
+          ...event.toMap(date),
+          'uid': _currentUserId, // Ensure uid is preserved
+        });
       }
     } catch (e) {
       print('Error updating class: $e');
@@ -107,9 +109,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
 
     try {
       final snapshot = await _firestore
-          .collection('users')
-          .doc(_currentUserId)
           .collection('classes')
+          .where('uid', isEqualTo: _currentUserId)
           .where('id', isEqualTo: classId)
           .get();
 
@@ -127,9 +128,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
 
     try {
       final snapshot = await _firestore
-          .collection('users')
-          .doc(_currentUserId)
           .collection('classes')
+          .where('uid', isEqualTo: _currentUserId)
           .where('baseClassId', isEqualTo: baseClassId)
           .get();
 
