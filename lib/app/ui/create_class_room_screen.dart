@@ -666,4 +666,3 @@ class UpperCaseTextFormatter extends TextInputFormatter {
     );
   }
 }
-
