@@ -21,6 +21,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   String? _currentUserId;
+  bool _isLoading = true;
 
   @override
   void initState() {
@@ -32,33 +33,58 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
   }
 
   Future<void> _loadUserClasses() async {
-    if (_currentUserId == null) return;
+    if (_currentUserId == null) {
+      setState(() {
+        _isLoading = false;
+      });
+      return;
+    }
 
     try {
+      print('Loading classes for user: $_currentUserId');
+
+      // Try without orderBy first to see if that's the issue
       final snapshot = await _firestore
           .collection('classes')
           .where('uid', isEqualTo: _currentUserId)
-          .orderBy('date')
           .get();
+
+      print('Found ${snapshot.docs.length} classes');
 
       setState(() {
         _events.clear();
         for (final doc in snapshot.docs) {
-          final data = doc.data();
-          final classEvent = ClassEvent.fromMap(data);
-          final date = (data['date'] as Timestamp).toDate();
-          final key = DateTime(date.year, date.month, date.day);
+          try {
+            final data = doc.data();
+            print('Processing document ${doc.id}: $data');
 
-          if (_events.containsKey(key)) {
-            _events[key]!.add(classEvent);
-          } else {
-            _events[key] = [classEvent];
+            final classEvent = ClassEvent.fromMap(data);
+            final timestamp = data['date'];
+            if (timestamp is Timestamp) {
+              final date = timestamp.toDate();
+              final key = DateTime(date.year, date.month, date.day);
+
+              if (_events.containsKey(key)) {
+                _events[key]!.add(classEvent);
+              } else {
+                _events[key] = [classEvent];
+              }
+              print('Added class: ${classEvent.title} on $key');
+            } else {
+              print('Invalid date format: $timestamp');
+            }
+          } catch (e) {
+            print('Error processing document ${doc.id}: $e');
           }
         }
+        _isLoading = false;
       });
     } catch (e) {
       print('Error loading classes: $e');
-      _showErrorSnackBar('Failed to load classes');
+      setState(() {
+        _isLoading = false;
+      });
+      _showErrorSnackBar('Failed to load classes: ${e.toString()}');
     }
   }
 
@@ -69,12 +95,18 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     }
 
     try {
-      await _firestore
-          .collection('classes')
-          .add({
+      final classData = {
         ...event.toMap(date),
-        'uid': _currentUserId, // Add uid field
-      });
+        'uid': _currentUserId,
+      };
+
+      print('Adding class to Firestore: $classData');
+
+      final docRef = await _firestore
+          .collection('classes')
+          .add(classData);
+
+      print('Class added with ID: ${docRef.id}');
     } catch (e) {
       print('Error adding class: $e');
       throw e;
@@ -93,10 +125,15 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
           .get();
 
       if (snapshot.docs.isNotEmpty) {
-        await snapshot.docs.first.reference.update({
+        final updateData = {
           ...event.toMap(date),
-          'uid': _currentUserId, // Ensure uid is preserved
-        });
+          'uid': _currentUserId,
+        };
+        await snapshot.docs.first.reference.update(updateData);
+        print('Class updated: ${event.id}');
+      } else {
+        print('No class found with id: ${event.id}');
+        throw Exception('Class not found');
       }
     } catch (e) {
       print('Error updating class: $e');
@@ -114,8 +151,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
           .where('id', isEqualTo: classId)
           .get();
 
-      for (final doc in snapshot.docs) {
-        await doc.reference.delete();
+      if (snapshot.docs.isNotEmpty) {
+        await snapshot.docs.first.reference.delete();
+        print('Class deleted: $classId');
+      } else {
+        print('No class found with id: $classId');
       }
     } catch (e) {
       print('Error deleting class: $e');
@@ -133,9 +173,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
           .where('baseClassId', isEqualTo: baseClassId)
           .get();
 
+      final batch = _firestore.batch();
       for (final doc in snapshot.docs) {
-        await doc.reference.delete();
+        batch.delete(doc.reference);
       }
+      await batch.commit();
+      print('Deleted ${snapshot.docs.length} instances of class: $baseClassId');
     } catch (e) {
       print('Error deleting class series: $e');
       throw e;
@@ -147,6 +190,17 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
       SnackBar(
         content: Text(message),
         backgroundColor: Colors.red,
+        duration: const Duration(seconds: 5),
+      ),
+    );
+  }
+
+  void _showSuccessSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 3),
       ),
     );
   }
@@ -168,20 +222,14 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
             isRecurring: true,
           );
 
-          // Add to local state
-          final key = DateTime(classDate.year, classDate.month, classDate.day);
-          if (_events.containsKey(key)) {
-            _events[key]!.add(instanceClass);
-          } else {
-            _events[key] = [instanceClass];
-          }
-
-          // Add to Firestore
+          // Add to Firestore first
           await _addClassToFirestore(instanceClass, classDate);
         }
       }
 
-      setState(() {});
+      // Reload data from Firestore to ensure consistency
+      await _loadUserClasses();
+      _showSuccessSnackBar('Class series added successfully!');
     } catch (e) {
       _showErrorSnackBar('Failed to add class: $e');
     }
@@ -196,18 +244,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
         isRecurring: false,
       );
 
-      // Add to local state
-      final key = DateTime(date.year, date.month, date.day);
-      if (_events.containsKey(key)) {
-        _events[key]!.add(singleClass);
-      } else {
-        _events[key] = [singleClass];
-      }
-
       // Add to Firestore
       await _addClassToFirestore(singleClass, date);
 
-      setState(() {});
+      // Reload data
+      await _loadUserClasses();
+      _showSuccessSnackBar('Class added successfully!');
     } catch (e) {
       _showErrorSnackBar('Failed to add class: $e');
     }
@@ -218,15 +260,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
       // Remove from original date in Firestore
       await _deleteClassFromFirestore(updatedClass.id);
 
-      // Update local state
-      final originalKey = DateTime(originalDate.year, originalDate.month, originalDate.day);
-      if (_events.containsKey(originalKey)) {
-        _events[originalKey]!.removeWhere((event) => event.id == updatedClass.id);
-        if (_events[originalKey]!.isEmpty) {
-          _events.remove(originalKey);
-        }
-      }
-
       // Add to new date with updated date
       final updatedInstance = updatedClass.copyWith(
         id: updatedClass.isRecurring
@@ -234,17 +267,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
             : 'single_${newDate.millisecondsSinceEpoch}',
       );
 
-      final newKey = DateTime(newDate.year, newDate.month, newDate.day);
-      if (_events.containsKey(newKey)) {
-        _events[newKey]!.add(updatedInstance);
-      } else {
-        _events[newKey] = [updatedInstance];
-      }
-
       // Add to Firestore
       await _addClassToFirestore(updatedInstance, newDate);
 
-      setState(() {});
+      // Reload data
+      await _loadUserClasses();
+      _showSuccessSnackBar('Class updated successfully!');
     } catch (e) {
       _showErrorSnackBar('Failed to update class: $e');
     }
@@ -255,9 +283,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
       // First remove all instances from Firestore
       await _deleteAllClassInstances(updatedClass.baseClassId);
 
-      // Then remove from local state
-      _deleteAllInstances(updatedClass.baseClassId);
-
       // Then add the updated class with new schedule
       final updatedBaseClass = updatedClass.copyWith(
         id: updatedClass.baseClassId, // Use the original base ID
@@ -265,6 +290,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
       );
 
       await _addClass(updatedBaseClass, newDate, recurringDays, weeks);
+      _showSuccessSnackBar('Class series updated successfully!');
     } catch (e) {
       _showErrorSnackBar('Failed to update class series: $e');
     }
@@ -275,16 +301,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
       // Remove from Firestore
       await _deleteClassFromFirestore(classId);
 
-      // Remove from local state
-      final key = DateTime(date.year, date.month, date.day);
-      if (_events.containsKey(key)) {
-        _events[key]!.removeWhere((event) => event.id == classId);
-        if (_events[key]!.isEmpty) {
-          _events.remove(key);
-        }
-      }
-
-      setState(() {});
+      // Reload data
+      await _loadUserClasses();
+      _showSuccessSnackBar('Class deleted successfully!');
     } catch (e) {
       _showErrorSnackBar('Failed to delete class: $e');
     }
@@ -318,7 +337,18 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
           ),
         ),
       ),
-      body: TabBarView(
+      body: _isLoading
+          ? Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 16),
+            Text('Loading classes...', style: GoogleFonts.poppins()),
+          ],
+        ),
+      )
+          : TabBarView(
         controller: _tabController,
         children: [
           // Calendar View
@@ -500,56 +530,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
           ),
         ],
       ),
-      floatingActionButton: PopupMenuButton<String>(
-        offset: const Offset(0, -100),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        itemBuilder: (BuildContext context) => [
-          PopupMenuItem<String>(
-            value: 'single',
-            child: Row(
-              children: [
-                Icon(Icons.event, color: Colors.blue),
-                SizedBox(width: 12),
-                Text('Add Single Class'),
-              ],
-            ),
-          ),
-          PopupMenuItem<String>(
-            value: 'series',
-            child: Row(
-              children: [
-                Icon(Icons.repeat, color: Colors.green),
-                SizedBox(width: 12),
-                Text('Add Class Series'),
-              ],
-            ),
-          ),
-        ],
-        onSelected: (String value) {
-          if (value == 'single') {
-            _showAddSingleClassDialog();
-          } else if (value == 'series') {
-            _showAddClassSeriesDialog();
-          }
+      floatingActionButton: FloatingActionButton(
+        onPressed: () {
+          _showAddClassDialog();
         },
-        child: Container(
-          width: 56,
-          height: 56,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: LinearGradient(
-              colors: [Colors.blue.shade600, Colors.purple.shade600],
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.blue.shade300.withOpacity(0.5),
-                blurRadius: 10,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: const Icon(Icons.add, color: Colors.white),
-        ),
+        child: const Icon(Icons.add),
       ),
     );
   }
@@ -565,6 +550,22 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
       if (dayEvents.isNotEmpty) {
         widgets.add(_buildDaySchedule(day, dayEvents));
       }
+    }
+
+    if (widgets.isEmpty) {
+      widgets.add(
+        Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Text(
+            'No classes scheduled for the next 7 days',
+            style: GoogleFonts.poppins(
+              color: Colors.grey,
+              fontSize: 16,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
     }
 
     return widgets;
@@ -852,6 +853,46 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
       case ClassType.seminar:
         return 'Seminar';
     }
+  }
+
+  void _showAddClassDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Add Class', style: GoogleFonts.poppins()),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: Icon(Icons.event, color: Colors.blue),
+                title: Text('Single Class'),
+                subtitle: Text('Add a one-time class'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showAddSingleClassDialog();
+                },
+              ),
+              ListTile(
+                leading: Icon(Icons.repeat, color: Colors.green),
+                title: Text('Class Series'),
+                subtitle: Text('Add recurring classes'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showAddClassSeriesDialog();
+                },
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showAddSingleClassDialog() {
@@ -1146,7 +1187,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
               ),
               ElevatedButton(
                 style: ElevatedButton.styleFrom(minimumSize: const Size(120, 40)),
-                onPressed: isFormValid
+                onPressed: isFormValid && !_isSaving
                     ? () async {
                   if (titleController.text.isNotEmpty &&
                       timeController.text.isNotEmpty &&
@@ -1193,17 +1234,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                       }
 
                       Navigator.pop(context);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            isEditing
-                                ? (isSeries ? 'Class series updated successfully!' : 'Class updated successfully!')
-                                : (isSeries ? 'Class series added successfully!' : 'Class added successfully!'),
-                          ),
-                          backgroundColor: Colors.green,
-                        ),
-                      );
-                      updateState(isSaving: false);
                     } catch (e) {
                       updateState(isSaving: false);
                       _showErrorSnackBar('Failed to save class: $e');
@@ -1264,18 +1294,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
           ),
           TextButton(
             onPressed: () async {
-              try {
-                await _deleteClass(event.id, date);
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Class deleted successfully!'),
-                    backgroundColor: Colors.green,
-                  ),
-                );
-              } catch (e) {
-                _showErrorSnackBar('Failed to delete class: $e');
-              }
+              Navigator.pop(context);
+              await _deleteClass(event.id, date);
             },
             style: TextButton.styleFrom(foregroundColor: Colors.red),
             child: const Text('Delete'),
@@ -1308,13 +1328,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                     try {
                       await _deleteAllClassInstances(event.baseClassId);
                       _deleteAllInstances(event.baseClassId);
-                      Navigator.pop(context); // Pop the dialog
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('All class instances deleted successfully!'),
-                          backgroundColor: Colors.green,
-                        ),
-                      );
+                      Navigator.pop(context);
+                      _showSuccessSnackBar('All class instances deleted successfully!');
                     } catch (e) {
                       setDialogState(() {
                         _isDeleting = false;
@@ -1398,16 +1413,22 @@ class ClassEvent {
   }
 
   factory ClassEvent.fromMap(Map<String, dynamic> map) {
-    return ClassEvent(
-      id: map['id'] ?? '',
-      baseClassId: map['baseClassId'] ?? map['id']?.split('_')[0] ?? '',
-      title: map['title'] ?? '',
-      time: map['time'] ?? '',
-      location: map['location'] ?? '',
-      instructor: map['instructor'] ?? '',
-      type: ClassType.values[map['type'] ?? 0],
-      isRecurring: map['isRecurring'] ?? false,
-    );
+    try {
+      return ClassEvent(
+        id: map['id']?.toString() ?? '',
+        baseClassId: map['baseClassId']?.toString() ?? map['id']?.toString().split('_')[0] ?? '',
+        title: map['title']?.toString() ?? '',
+        time: map['time']?.toString() ?? '',
+        location: map['location']?.toString() ?? '',
+        instructor: map['instructor']?.toString() ?? '',
+        type: ClassType.values[map['type'] is int ? map['type'] : 0],
+        isRecurring: map['isRecurring'] ?? false,
+      );
+    } catch (e) {
+      print('Error creating ClassEvent from map: $e');
+      print('Map data: $map');
+      rethrow;
+    }
   }
 }
 

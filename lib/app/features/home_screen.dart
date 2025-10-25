@@ -43,6 +43,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _currentIndex = index;
     });
   }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -69,6 +70,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       )
           : null,
+
       ///Drawer Start here
       drawer: Drawer(
         child: ListView(
@@ -254,39 +256,45 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final today = DateTime(now.year, now.month, now.day);
       final tomorrow = today.add(const Duration(days: 1));
 
-      // Load today's classes
-      final todaySnapshot = await _firestore
-          .collection('users')
-          .doc(user.uid)
+      print('Loading classes for user: ${user.uid}');
+      print('Today: $today');
+      print('Tomorrow: $tomorrow');
+
+      // Load ALL classes from the 'classes' collection (no user filtering)
+      final classesSnapshot = await _firestore
           .collection('classes')
-          .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(today))
-          .where('date', isLessThan: Timestamp.fromDate(today.add(const Duration(days: 1))))
           .orderBy('date')
           .get();
 
-      // Load tomorrow's classes
-      final tomorrowSnapshot = await _firestore
-          .collection('users')
-          .doc(user.uid)
-          .collection('classes')
-          .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(tomorrow))
-          .where('date', isLessThan: Timestamp.fromDate(tomorrow.add(const Duration(days: 1))))
-          .orderBy('date')
-          .get();
+      print('Found ${classesSnapshot.docs.length} total classes in collection');
 
       List<ClassEvent> todayClasses = [];
       List<ClassEvent> tomorrowClasses = [];
 
-      // Process today's classes
-      for (final doc in todaySnapshot.docs) {
-        final classEvent = ClassEvent.fromMap(doc.data());
-        todayClasses.add(classEvent);
-      }
+      // Process all classes and filter by date
+      for (final doc in classesSnapshot.docs) {
+        try {
+          final data = doc.data();
+          print('Processing class: ${data['title']} - Date: ${data['date']}');
 
-      // Process tomorrow's classes
-      for (final doc in tomorrowSnapshot.docs) {
-        final classEvent = ClassEvent.fromMap(doc.data());
-        tomorrowClasses.add(classEvent);
+          final classEvent = ClassEvent.fromMap(data);
+          final classDate = (data['date'] as Timestamp).toDate();
+          final classDateOnly = DateTime(classDate.year, classDate.month, classDate.day);
+
+          // Check if class is today
+          if (classDateOnly.isAtSameMomentAs(today)) {
+            todayClasses.add(classEvent);
+            print('Added to today: ${classEvent.title}');
+          }
+          // Check if class is tomorrow
+          else if (classDateOnly.isAtSameMomentAs(tomorrow)) {
+            tomorrowClasses.add(classEvent);
+            print('Added to tomorrow: ${classEvent.title}');
+          }
+        } catch (e) {
+          print('Error processing class: $e');
+          print('Class data: ${doc.data()}');
+        }
       }
 
       // Filter out past classes for today
@@ -310,6 +318,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _displayTitle = "Upcoming Classes";
         }
       });
+
+      print('Filtered today classes: ${_todayClasses.length}');
+      print('Tomorrow classes: ${_tomorrowClasses.length}');
+
     } catch (e) {
       print('Error loading classes: $e');
       setState(() {
@@ -328,6 +340,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final dateTime = format.parse(timePart);
       return TimeOfDay.fromDateTime(dateTime);
     } catch (e) {
+      print('Error parsing time: $timeString - $e');
       return null;
     }
   }
@@ -441,7 +454,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     } else if (_tomorrowClasses.isNotEmpty) {
       return 'No more classes today. ${_tomorrowClasses.length} ${_tomorrowClasses.length == 1 ? 'class' : 'classes'} scheduled for tomorrow.';
     } else {
-      return 'No upcoming classes. Add some classes to your schedule!';
+      return 'No upcoming classes.';
     }
   }
 
@@ -629,7 +642,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
         const SizedBox(height: 8),
         Text(
-          'Add classes to your schedule to see them here',
+          'Check back later for scheduled classes',
           textAlign: TextAlign.center,
           style: GoogleFonts.poppins(
             color: Colors.grey,
@@ -693,7 +706,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             title: 'Assignments',
             color: Colors.orange,
             onTap: () {
-              // Navigate to assignments
+              widget.onNavigate(2); // Navigate to Assignments screen (index 2)
             },
           ),
         ),
@@ -704,12 +717,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             title: 'Notifications',
             color: Colors.purple,
             onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => const NotificationScreen(),
-                ),
-              );
+              widget.onNavigate(3); // Navigate to Notifications screen (index 3)
             },
           ),
         ),
@@ -800,12 +808,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               width: double.infinity,
               child: TextButton(
                 onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const NotificationScreen(),
-                    ),
-                  );
+                  widget.onNavigate(3); // Navigate to Notifications screen (index 3)
                 },
                 child: Text(
                   'View All Notifications',
@@ -866,7 +869,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 }
 
-// Add these classes at the bottom of the file (same as in schedule_screen.dart)
+// ClassEvent class (same as in schedule_screen.dart)
 class ClassEvent {
   final String id;
   final String baseClassId;
@@ -926,16 +929,22 @@ class ClassEvent {
   }
 
   factory ClassEvent.fromMap(Map<String, dynamic> map) {
-    return ClassEvent(
-      id: map['id'] ?? '',
-      baseClassId: map['baseClassId'] ?? map['id']?.split('_')[0] ?? '',
-      title: map['title'] ?? '',
-      time: map['time'] ?? '',
-      location: map['location'] ?? '',
-      instructor: map['instructor'] ?? '',
-      type: ClassType.values[map['type'] ?? 0],
-      isRecurring: map['isRecurring'] ?? false,
-    );
+    try {
+      return ClassEvent(
+        id: map['id']?.toString() ?? '',
+        baseClassId: map['baseClassId']?.toString() ?? map['id']?.toString().split('_')[0] ?? '',
+        title: map['title']?.toString() ?? '',
+        time: map['time']?.toString() ?? '',
+        location: map['location']?.toString() ?? '',
+        instructor: map['instructor']?.toString() ?? '',
+        type: ClassType.values[map['type'] is int ? map['type'] : 0],
+        isRecurring: map['isRecurring'] ?? false,
+      );
+    } catch (e) {
+      print('Error creating ClassEvent from map: $e');
+      print('Map data: $map');
+      rethrow;
+    }
   }
 }
 
