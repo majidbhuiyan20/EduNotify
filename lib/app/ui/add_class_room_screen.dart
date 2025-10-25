@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:edunotify/app/features/home_screen.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
@@ -84,10 +85,9 @@ class _AddClassRoomScreenState extends State<AddClassRoomScreen> {
       );
 
       // Navigate to home screen
-      Navigator.pushNamedAndRemoveUntil(
-          context,
-          '/home',
-              (route) => false
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => HomeScreen()),
       );
 
     } catch (e) {
