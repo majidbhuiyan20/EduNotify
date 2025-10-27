@@ -1,18 +1,19 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:edunotify/app/features/assignment_screen.dart';
-import 'package:edunotify/app/features/notification_screen.dart';
-import 'package:edunotify/app/features/settings_screen.dart';
-import 'package:edunotify/app/ui/add_class_room_screen.dart';
-import 'package:edunotify/app/ui/create_class_room_screen.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 
 import '../auth/login_screen.dart';
+import '../ui/add_class_room_screen.dart';
+import '../ui/create_class_room_screen.dart';
 import '../ui/role_selection_ui.dart';
 import 'schedule_screen.dart';
+import 'assignment_screen.dart';
+import 'notification_screen.dart';
+import 'settings_screen.dart';
 
 // A function type for handling navigation from child widgets
 typedef void GoToPageCallback(int pageIndex);
@@ -27,21 +28,38 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final User? user = FirebaseAuth.instance.currentUser;
   int _currentIndex = 0;
-  late final List<Widget> _screens;
+  late List<Widget> _screens;
   String? _userRole;
   bool _isLoading = true;
+  String? _selectedClassroomId;
 
   @override
   void initState() {
     super.initState();
+    _initializeScreens();
     _checkUserRole();
+  }
+
+  void _initializeScreens() {
     _screens = [
-      DashboardScreen(onNavigate: _navigateToPage, userRole: _userRole),
-      const ScheduleScreen(),
+      DashboardScreen(
+        onNavigate: _navigateToPage,
+        userRole: _userRole,
+        onClassroomSelected: _onClassroomSelected,
+        selectedClassroomId: _selectedClassroomId,
+      ),
+      ScheduleScreen(selectedClassroomId: _selectedClassroomId),
       const AssignmentScreen(),
       const NotificationScreen(),
       SettingsScreen(),
     ];
+  }
+
+  void _onClassroomSelected(String? classroomId) {
+    setState(() {
+      _selectedClassroomId = classroomId;
+    });
+    _updateScreens();
   }
 
   Future<void> _checkUserRole() async {
@@ -60,7 +78,6 @@ class _HomeScreenState extends State<HomeScreen> {
           _isLoading = false;
         });
 
-        // If no role is selected, navigate to role selection
         if (_userRole == null) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             Navigator.pushReplacement(
@@ -73,7 +90,6 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() {
           _isLoading = false;
         });
-        // If user document doesn't exist, navigate to role selection
         WidgetsBinding.instance.addPostFrameCallback((_) {
           Navigator.pushReplacement(
             context,
@@ -87,11 +103,29 @@ class _HomeScreenState extends State<HomeScreen> {
         _isLoading = false;
       });
     }
+    _updateScreens();
   }
 
   void _navigateToPage(int index) {
     setState(() {
       _currentIndex = index;
+    });
+  }
+
+  void _updateScreens() {
+    setState(() {
+      _screens = [
+        DashboardScreen(
+          onNavigate: _navigateToPage,
+          userRole: _userRole,
+          onClassroomSelected: _onClassroomSelected,
+          selectedClassroomId: _selectedClassroomId,
+        ),
+        ScheduleScreen(selectedClassroomId: _selectedClassroomId),
+        const AssignmentScreen(),
+        const NotificationScreen(),
+        SettingsScreen(),
+      ];
     });
   }
 
@@ -145,7 +179,6 @@ class _HomeScreenState extends State<HomeScreen> {
     if (user == null) return;
 
     try {
-      // Find classroom by class code
       final classroomQuery = await FirebaseFirestore.instance
           .collection('classrooms')
           .where('classCode', isEqualTo: classCode)
@@ -161,26 +194,21 @@ class _HomeScreenState extends State<HomeScreen> {
       final classroomData = classroomDoc.data();
       final students = List<String>.from(classroomData['students'] ?? []);
 
-      // Check if already enrolled
       if (students.contains(user.uid)) {
         _showSnackBar('You are already enrolled in this classroom.', Colors.orange);
         return;
       }
 
-      // Add student to enrolled list
       await classroomDoc.reference.update({
         'students': FieldValue.arrayUnion([user.uid])
       });
 
-      // Add classroom to user's enrolled classrooms
       await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
         'enrolledClassrooms': FieldValue.arrayUnion([classroomDoc.id]),
         'lastUpdated': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
       _showSnackBar('Successfully joined classroom!', Colors.green);
-
-      // Refresh the dashboard
       setState(() {});
 
     } catch (e) {
@@ -202,7 +230,6 @@ class _HomeScreenState extends State<HomeScreen> {
       context,
       MaterialPageRoute(builder: (context) => CreateClassRoomScreen()),
     ).then((_) {
-      // Refresh when returning from create classroom
       setState(() {});
     });
   }
@@ -212,7 +239,6 @@ class _HomeScreenState extends State<HomeScreen> {
       context,
       MaterialPageRoute(builder: (context) => AddClassRoomScreen()),
     ).then((_) {
-      // Refresh when returning from add classroom
       setState(() {});
     });
   }
@@ -255,7 +281,6 @@ class _HomeScreenState extends State<HomeScreen> {
               );
             },
           ),
-          // Show join class button for all roles
           IconButton(
             icon: const Icon(Icons.group_add),
             onPressed: _showJoinClassDialog,
@@ -265,7 +290,6 @@ class _HomeScreenState extends State<HomeScreen> {
       )
           : null,
 
-      ///Drawer Start here
       drawer: Drawer(
         child: ListView(
           padding: EdgeInsets.zero,
@@ -370,7 +394,6 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
 
-            // Classroom Management Section based on role
             if (_userRole == 'Teacher' || _userRole == 'CR') ...[
               const Divider(),
               ListTile(
@@ -418,11 +441,9 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
       ),
-      ///Drawer Ends Here
 
       body: _screens[_currentIndex],
 
-      /// Bottom Navigation Start Here
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         type: BottomNavigationBarType.fixed,
@@ -457,9 +478,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      /// Bottom Navigation End Here
 
-      // Floating Action Button based on role
       floatingActionButton: _currentIndex == 0
           ? (_userRole == 'Teacher' || _userRole == 'CR')
           ? FloatingActionButton.extended(
@@ -492,12 +511,12 @@ class _HomeScreenState extends State<HomeScreen> {
         label: Text('Classroom'),
       )
           : (_userRole == 'Student')
-              ? FloatingActionButton.extended(
-                  onPressed: _showJoinClassDialog,
-                  icon: const Icon(Icons.group_add),
-                  label: const Text('Join Classroom'),
-                )
-              : null // No FAB for other roles or if role is null
+          ? FloatingActionButton.extended(
+        onPressed: _showJoinClassDialog,
+        icon: const Icon(Icons.group_add),
+        label: const Text('Join Classroom'),
+      )
+          : null
           : null,
     );
   }
@@ -506,7 +525,16 @@ class _HomeScreenState extends State<HomeScreen> {
 class DashboardScreen extends StatefulWidget {
   final GoToPageCallback onNavigate;
   final String? userRole;
-  const DashboardScreen({super.key, required this.onNavigate, required this.userRole});
+  final Function(String?) onClassroomSelected;
+  final String? selectedClassroomId;
+
+  const DashboardScreen({
+    super.key,
+    required this.onNavigate,
+    required this.userRole,
+    required this.onClassroomSelected,
+    required this.selectedClassroomId,
+  });
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -520,11 +548,77 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List<ClassEvent> _rescheduledClasses = [];
   bool _isLoading = true;
   String _displayTitle = "Today's Classes";
+  List<Map<String, dynamic>> _classrooms = [];
+  String? _selectedClassroomId;
 
   @override
   void initState() {
     super.initState();
+    _selectedClassroomId = widget.selectedClassroomId;
+    _loadClassrooms();
     _loadClasses();
+  }
+
+  @override
+  void didUpdateWidget(DashboardScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.selectedClassroomId != oldWidget.selectedClassroomId) {
+      _selectedClassroomId = widget.selectedClassroomId;
+      _loadClasses();
+    }
+  }
+
+  Future<void> _loadClassrooms() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    try {
+      List<Map<String, dynamic>> classrooms = [];
+
+      if (widget.userRole == 'Teacher' || widget.userRole == 'CR') {
+        final teacherClassrooms = await _firestore
+            .collection('classrooms')
+            .where('createdBy', isEqualTo: user.uid)
+            .where('isActive', isEqualTo: true)
+            .get();
+
+        for (final doc in teacherClassrooms.docs) {
+          classrooms.add({
+            'id': doc.id,
+            ...doc.data(),
+          });
+        }
+      } else if (widget.userRole == 'Student') {
+        final userDoc = await _firestore.collection('users').doc(user.uid).get();
+        final userData = userDoc.data();
+        final enrolledClassrooms = List<String>.from(userData?['enrolledClassrooms'] ?? []);
+
+        if (enrolledClassrooms.isNotEmpty) {
+          final studentClassrooms = await _firestore
+              .collection('classrooms')
+              .where(FieldPath.documentId, whereIn: enrolledClassrooms)
+              .where('isActive', isEqualTo: true)
+              .get();
+
+          for (final doc in studentClassrooms.docs) {
+            classrooms.add({
+              'id': doc.id,
+              ...doc.data(),
+            });
+          }
+        }
+      }
+
+      setState(() {
+        _classrooms = classrooms;
+        if (_selectedClassroomId == null && classrooms.isNotEmpty) {
+          _selectedClassroomId = classrooms.first['id'];
+          widget.onClassroomSelected(_selectedClassroomId);
+        }
+      });
+    } catch (e) {
+      print('Error loading classrooms: $e');
+    }
   }
 
   Future<void> _loadClasses() async {
@@ -538,56 +632,60 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       print('Loading classes for user: ${user.uid}');
 
-      // Get user's role and enrolled classrooms
-      final userDoc = await _firestore.collection('users').doc(user.uid).get();
-      final userData = userDoc.data();
-      final userRole = userData?['role'] ?? 'Student';
-      final enrolledClassrooms = List<String>.from(userData?['enrolledClassrooms'] ?? []);
-
       List<ClassEvent> allClasses = [];
 
-      if (userRole == 'Teacher' || userRole == 'CR') {
-        // Load classes created by this teacher
-        final teacherClasses = await _firestore
+      if (widget.userRole == 'Teacher' || widget.userRole == 'CR') {
+        Query classesQuery = _firestore
             .collection('classes')
-            .where('teacherUid', isEqualTo: user.uid)
-            .get();
+            .where('teacherUid', isEqualTo: user.uid);
+
+        if (_selectedClassroomId != null && _selectedClassroomId!.isNotEmpty) {
+          classesQuery = classesQuery.where('classroomId', isEqualTo: _selectedClassroomId);
+        }
+
+        final teacherClasses = await classesQuery.get();
 
         for (final doc in teacherClasses.docs) {
           try {
-            final classEvent = ClassEvent.fromMap(doc.data());
+            final classEvent = ClassEvent.fromMap(doc.data() as Map<String, dynamic>);
             allClasses.add(classEvent);
           } catch (e) {
             print('Error processing teacher class: $e');
           }
         }
-      }
+      } else if (widget.userRole == 'Student') {
+        final userDoc = await _firestore.collection('users').doc(user.uid).get();
+        final userData = userDoc.data();
+        final enrolledClassrooms = List<String>.from(userData?['enrolledClassrooms'] ?? []);
 
-      // Load classes from enrolled classrooms
-      for (final classroomId in enrolledClassrooms) {
-        try {
-          final classroomClasses = await _firestore
-              .collection('classes')
-              .where('classroomId', isEqualTo: classroomId)
-              .get();
+        final classroomsToLoad = _selectedClassroomId != null && _selectedClassroomId!.isNotEmpty
+            ? [_selectedClassroomId!]
+            : enrolledClassrooms;
 
-          for (final doc in classroomClasses.docs) {
-            try {
-              final classEvent = ClassEvent.fromMap(doc.data());
-              allClasses.add(classEvent);
-            } catch (e) {
-              print('Error processing enrolled class: $e');
+        for (final classroomId in classroomsToLoad) {
+          try {
+            final classroomClasses = await _firestore
+                .collection('classes')
+                .where('classroomId', isEqualTo: classroomId)
+                .get();
+
+            for (final doc in classroomClasses.docs) {
+              try {
+                final classEvent = ClassEvent.fromMap(doc.data());
+                allClasses.add(classEvent);
+              } catch (e) {
+                print('Error processing enrolled class: $e');
+              }
             }
+          } catch (e) {
+            print('Error loading classroom $classroomId: $e');
           }
-        } catch (e) {
-          print('Error loading classroom $classroomId: $e');
         }
       }
 
       // Load rescheduled classes
       final rescheduledClasses = await _firestore
           .collection('rescheduled_classes')
-          .where('classroomId', whereIn: enrolledClassrooms)
           .where('newDate', isGreaterThanOrEqualTo: Timestamp.fromDate(today))
           .get();
 
@@ -616,19 +714,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
         try {
           final data = doc.data();
           final originalClass = ClassEvent(
-            id: data['originalClassId'],
-            baseClassId: data['originalClassId'],
-            title: data['className'],
-            time: data['newTime'],
-            location: data['newLocation'],
-            instructor: data['instructor'],
-            type: ClassType.lecture, // Default type
+            id: data['originalClassId'] ?? '',
+            baseClassId: data['originalClassId'] ?? '',
+            title: data['className'] ?? 'Class',
+            time: data['newTime'] ?? '',
+            location: data['newLocation'] ?? '',
+            instructor: data['instructor'] ?? '',
+            type: ClassType.lecture,
             isRecurring: false,
             date: (data['newDate'] as Timestamp).toDate(),
-            teacherUid: data['teacherUid'],
-            classroomId: data['classroomId'],
-            classroomName: data['classroomName'],
-            classCode: data['classCode'],
+            teacherUid: data['teacherUid'] ?? '',
+            classroomId: data['classroomId'] ?? '',
+            classroomName: data['classroomName'] ?? '',
+            classCode: data['classCode'] ?? '',
           );
           rescheduledClassList.add(originalClass);
         } catch (e) {
@@ -639,8 +737,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       // Filter out past classes for today
       final currentTime = TimeOfDay.fromDateTime(now);
       final filteredTodayClasses = todayClasses.where((classEvent) {
-        final classTime = _parseTime(classEvent.time);
-        return classTime != null && _isTimeAfter(classTime, currentTime);
+        final classEndTime = _parseEndTime(classEvent.time);
+        return classEndTime != null && _isTimeAfter(classEndTime, currentTime);
       }).toList();
 
       setState(() {
@@ -649,6 +747,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _rescheduledClasses = rescheduledClassList;
         _isLoading = false;
 
+        // Set display title based on available classes
         if (_todayClasses.isNotEmpty) {
           _displayTitle = "Today's Classes";
         } else if (_tomorrowClasses.isNotEmpty) {
@@ -668,63 +767,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  // Role-based action buttons - Students cannot edit/delete classes
+  void _onClassroomSelected(String? classroomId) {
+    setState(() {
+      _selectedClassroomId = classroomId;
+    });
+    widget.onClassroomSelected(classroomId);
+    _loadClasses();
+  }
+
   Widget _buildRoleBasedActions() {
-    if (widget.userRole == 'Teacher' || widget.userRole == 'CR') {
-      return Row(
-        children: [
-          Expanded(
-            child: _buildActionCard(
-              icon: Icons.add_circle,
-              title: 'Create Classroom',
-              color: Colors.green,
-              onTap: () {
-                // Navigate to create classroom
-                // This will be handled by the parent widget
-              },
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: _buildActionCard(
-              icon: Icons.group_add,
-              title: 'Add Classroom',
-              color: Colors.blue,
-              onTap: () {
-                // Navigate to add classroom
-                // This will be handled by the parent widget
-              },
-            ),
-          ),
-        ],
-      );
-    } else if (widget.userRole == 'Student') {
-      return _buildActionCard(
-        icon: Icons.group_add,
-        title: 'Add Classroom',
-        color: Colors.blue,
-        onTap: () {
-          // Navigate to add classroom
-          // This will be handled by the parent widget
-        },
-      );
-    } else if (widget.userRole == null) {
-      return _buildActionCard(
-        icon: Icons.person,
-        title: 'Select Role',
-        color: Colors.orange,
-        onTap: () {
-          // Navigate to role selection
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (context) => RoleSelectionScreen()),
-          );
-        },
-      );
-    } else {
-      // If role is selected but not teacher/CR, e.g., 'Student', and we want to show nothing
-      return const SizedBox.shrink(); // Don't show any card
+    if (widget.userRole != null) {
+      return const SizedBox.shrink();
     }
+
+    return _buildActionCard(
+      icon: Icons.person,
+      title: 'Select Role',
+      color: Colors.orange,
+      onTap: () {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => RoleSelectionScreen()),
+        );
+      },
+    );
   }
 
   Widget _buildActionCard({
@@ -780,6 +846,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  TimeOfDay? _parseEndTime(String timeString) {
+    try {
+      if (timeString.contains(' - ')) {
+        final timePart = timeString.split(' - ').last;
+        final format = timePart.contains('AM') || timePart.contains('PM')
+            ? DateFormat('h:mm a')
+            : DateFormat('HH:mm');
+        final dateTime = format.parse(timePart);
+        return TimeOfDay.fromDateTime(dateTime);
+      }
+      return _parseTime(timeString);
+    } catch (e) {
+      return null;
+    }
+  }
+
   bool _isTimeAfter(TimeOfDay classTime, TimeOfDay currentTime) {
     if (classTime.hour > currentTime.hour) return true;
     if (classTime.hour == currentTime.hour && classTime.minute > currentTime.minute) return true;
@@ -787,23 +869,36 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   List<ClassEvent> get _displayClasses {
-    if (_todayClasses.isNotEmpty) return _todayClasses;
-    if (_tomorrowClasses.isNotEmpty) return _tomorrowClasses;
-    if (_rescheduledClasses.isNotEmpty) return _rescheduledClasses;
+    if (_todayClasses.isNotEmpty) {
+      return _todayClasses;
+    } else if (_tomorrowClasses.isNotEmpty) {
+      return _tomorrowClasses;
+    } else if (_rescheduledClasses.isNotEmpty) {
+      return _rescheduledClasses;
+    }
     return [];
   }
 
   String get _classCountText {
-    if (_todayClasses.isNotEmpty) return '${_todayClasses.length} ${_todayClasses.length == 1 ? 'Class' : 'Classes'}';
-    if (_tomorrowClasses.isNotEmpty) return '${_tomorrowClasses.length} ${_tomorrowClasses.length == 1 ? 'Class' : 'Classes'}';
-    if (_rescheduledClasses.isNotEmpty) return '${_rescheduledClasses.length} Rescheduled';
-    return 'No Classes';
+    if (_todayClasses.isNotEmpty) {
+      return '${_todayClasses.length} ${_todayClasses.length == 1 ? 'Class' : 'Classes'}';
+    } else if (_tomorrowClasses.isNotEmpty) {
+      return '${_tomorrowClasses.length} ${_tomorrowClasses.length == 1 ? 'Class' : 'Classes'}';
+    } else if (_rescheduledClasses.isNotEmpty) {
+      return '${_rescheduledClasses.length} Rescheduled';
+    } else {
+      return 'No Classes';
+    }
   }
 
   Color get _classCountColor {
-    if (_todayClasses.isNotEmpty) return Colors.blue;
-    if (_tomorrowClasses.isNotEmpty) return Colors.orange;
-    if (_rescheduledClasses.isNotEmpty) return Colors.purple;
+    if (_todayClasses.isNotEmpty) {
+      return Colors.blue;
+    } else if (_tomorrowClasses.isNotEmpty) {
+      return Colors.orange;
+    } else if (_rescheduledClasses.isNotEmpty) {
+      return Colors.purple;
+    }
     return Colors.grey;
   }
 
@@ -815,31 +910,96 @@ class _DashboardScreenState extends State<DashboardScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Welcome Section
           _buildWelcomeSection(user),
           const SizedBox(height: 24),
 
-          // Role-based Actions
           _buildRoleBasedActions(),
+
+          if (_classrooms.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            _buildClassroomSelector(),
+            const SizedBox(height: 16),
+          ],
+
+          if (widget.userRole == 'Teacher' || widget.userRole == 'CR') ...[
+            const SizedBox(height: 16),
+            _buildMyClassroomsSection(),
+          ],
+
+          if (widget.userRole == 'Student') ...[
+            const SizedBox(height: 16),
+            _buildStudentClassroomsSection(),
+          ],
+
           const SizedBox(height: 24),
 
-          // Rescheduled Classes Card (if any)
           if (_rescheduledClasses.isNotEmpty) ...[
             _buildRescheduledClassesCard(),
             const SizedBox(height: 24),
           ],
 
-          // Classes Card
           _buildClassesCard(),
           const SizedBox(height: 24),
 
-          // Quick Actions
           _buildQuickActions(),
           const SizedBox(height: 24),
 
-          // Recent Notifications
           _buildNotificationsCard(),
         ],
+      ),
+    );
+  }
+
+  Widget _buildClassroomSelector() {
+    return Card(
+      elevation: 2,
+      child: Padding(
+        padding: const EdgeInsets.all(12.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.school, size: 20, color: Colors.blue),
+                SizedBox(width: 8),
+                Text(
+                  'Select Classroom',
+                  style: GoogleFonts.poppins(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: 8),
+            DropdownButtonFormField<String>(
+              value: _selectedClassroomId,
+              decoration: InputDecoration(
+                border: OutlineInputBorder(),
+                hintText: 'Select a classroom',
+                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              ),
+              items: [
+                DropdownMenuItem<String>(
+                  value: null,
+                  child: Text('All Classrooms', style: GoogleFonts.poppins()),
+                ),
+                ..._classrooms.map<DropdownMenuItem<String>>((classroom) {
+                  return DropdownMenuItem<String>(
+                    value: classroom['id'] as String?,
+                    child: Text(
+                      '${classroom['className']} (${classroom['classCode']})',
+                      style: GoogleFonts.poppins(),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                    ),
+                  );
+                }).toList(),
+              ],
+              onChanged: _onClassroomSelected,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -866,7 +1026,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         ),
 
-        // Role badge
         if (widget.userRole != null) ...[
           const SizedBox(height: 8),
           Container(
@@ -887,7 +1046,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         ],
 
-        // Date and time indicator
         if (!_isLoading) ...[
           const SizedBox(height: 16),
           Container(
@@ -914,6 +1072,242 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         ],
       ],
+    );
+  }
+
+  Widget _buildMyClassroomsSection() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          "My Classrooms",
+          style: GoogleFonts.poppins(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 8),
+        StreamBuilder<QuerySnapshot>(
+          stream: _firestore
+              .collection('classrooms')
+              .where('createdBy', isEqualTo: user.uid)
+              .where('isActive', isEqualTo: true)
+              .snapshots(),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+              return _buildEmptyClassroomsState('You have not created any classrooms yet.');
+            }
+
+            final classrooms = snapshot.data!.docs;
+
+            return ListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: classrooms.length,
+              itemBuilder: (context, index) {
+                final classroom = classrooms[index];
+                final data = classroom.data() as Map<String, dynamic>;
+                return _buildClassroomListItem(data, classroom.id, true);
+              },
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStudentClassroomsSection() {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          "My Enrolled Classrooms",
+          style: GoogleFonts.poppins(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 8),
+        StreamBuilder<DocumentSnapshot>(
+          stream: _firestore.collection('users').doc(user.uid).snapshots(),
+          builder: (context, userSnapshot) {
+            if (userSnapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (!userSnapshot.hasData || !userSnapshot.data!.exists) {
+              return _buildEmptyClassroomsState('You are not enrolled in any classrooms yet.');
+            }
+
+            final userData = userSnapshot.data!.data() as Map<String, dynamic>?;
+            final enrolledClassrooms = List<String>.from(userData?['enrolledClassrooms'] ?? []);
+
+            if (enrolledClassrooms.isEmpty) {
+              return _buildEmptyClassroomsState('You are not enrolled in any classrooms yet.');
+            }
+
+            return StreamBuilder<QuerySnapshot>(
+              stream: _firestore
+                  .collection('classrooms')
+                  .where(FieldPath.documentId, whereIn: enrolledClassrooms)
+                  .where('isActive', isEqualTo: true)
+                  .snapshots(),
+              builder: (context, classroomSnapshot) {
+                if (classroomSnapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (!classroomSnapshot.hasData || classroomSnapshot.data!.docs.isEmpty) {
+                  return _buildEmptyClassroomsState('No active classrooms found.');
+                }
+
+                final classrooms = classroomSnapshot.data!.docs;
+
+                return ListView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: classrooms.length,
+                  itemBuilder: (context, index) {
+                    final classroom = classrooms[index];
+                    final data = classroom.data() as Map<String, dynamic>;
+                    return _buildClassroomListItem(data, classroom.id, false);
+                  },
+                );
+              },
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildClassroomListItem(Map<String, dynamic> data, String classroomId, bool isTeacher) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: isTeacher ? Colors.blue.withOpacity(0.2) : Colors.green.withOpacity(0.2),
+          child: Icon(Icons.school, color: isTeacher ? Colors.blue : Colors.green),
+        ),
+        title: Text(
+            data['className'],
+            style: GoogleFonts.poppins(fontWeight: FontWeight.w500)
+        ),
+        subtitle: Text(
+          isTeacher
+              ? 'Class Code: ${data['classCode']}'
+              : 'Created by: ${data['teacherName'] ?? 'Teacher'}',
+          style: GoogleFonts.poppins(fontSize: 12),
+        ),
+        trailing: isTeacher
+            ? IconButton(
+          icon: Icon(Icons.content_copy, size: 20),
+          onPressed: () {
+            Clipboard.setData(ClipboardData(text: data['classCode']));
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Class code copied to clipboard!'),
+                backgroundColor: Colors.green,
+              ),
+            );
+          },
+          tooltip: 'Copy Class Code',
+        )
+            : null,
+        onTap: () {
+          _showClassroomDetails(data, classroomId);
+        },
+      ),
+    );
+  }
+
+  Widget _buildEmptyClassroomsState(String message) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Center(
+          child: Column(
+            children: [
+              Icon(Icons.school_outlined, size: 48, color: Colors.grey[300]),
+              SizedBox(height: 8),
+              Text(
+                message,
+                style: GoogleFonts.poppins(color: Colors.grey),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showClassroomDetails(Map<String, dynamic> classroomData, String classroomId) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          classroomData['className'],
+          style: GoogleFonts.poppins(fontWeight: FontWeight.bold),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildClassroomDetailRow(Icons.code, 'Class Code: ${classroomData['classCode']}'),
+            _buildClassroomDetailRow(Icons.person, 'Teacher: ${classroomData['teacherName'] ?? 'Not specified'}'),
+            _buildClassroomDetailRow(Icons.description, 'Subject: ${classroomData['subject'] ?? 'Not specified'}'),
+            _buildClassroomDetailRow(Icons.group, 'Students: ${List.from(classroomData['students'] ?? []).length}'),
+            if (classroomData['description'] != null)
+              _buildClassroomDetailRow(Icons.info, 'Description: ${classroomData['description']}'),
+          ],
+        ),
+        actions: [
+          if (widget.userRole == 'Teacher' || widget.userRole == 'CR')
+            TextButton(
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: classroomData['classCode']));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Class code copied to clipboard!'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+                Navigator.pop(context);
+              },
+              child: Text('Copy Class Code'),
+            ),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildClassroomDetailRow(IconData icon, String text) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: Colors.grey),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              style: GoogleFonts.poppins(fontSize: 14),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1006,31 +1400,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Color _getRoleColor(String role) {
-    switch (role) {
-      case 'Teacher':
-        return Colors.red;
-      case 'CR':
-        return Colors.orange;
-      case 'Student':
-        return Colors.green;
-      default:
-        return Colors.grey;
-    }
-  }
-
-  String _getGreetingMessage() {
-    if (_todayClasses.isNotEmpty) {
-      return 'You have ${_todayClasses.length} ${_todayClasses.length == 1 ? 'class' : 'classes'} today.';
-    } else if (_tomorrowClasses.isNotEmpty) {
-      return 'No more classes today. ${_tomorrowClasses.length} ${_tomorrowClasses.length == 1 ? 'class' : 'classes'} scheduled for tomorrow.';
-    } else if (_rescheduledClasses.isNotEmpty) {
-      return 'You have ${_rescheduledClasses.length} rescheduled ${_rescheduledClasses.length == 1 ? 'class' : 'classes'}.';
-    } else {
-      return 'No upcoming classes. Join a classroom to see classes!';
-    }
-  }
-
   Widget _buildClassesCard() {
     if (_isLoading) {
       return _buildLoadingCard();
@@ -1080,7 +1449,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               width: double.infinity,
               child: ElevatedButton.icon(
                 onPressed: () {
-                  widget.onNavigate(1); // Navigate to Schedule screen (index 1)
+                  widget.onNavigate(1);
                 },
                 icon: const Icon(Icons.schedule, size: 20),
                 label: Text(
@@ -1254,7 +1623,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
       trailing: const Icon(Icons.arrow_forward_ios, size: 16),
       onTap: () {
-        widget.onNavigate(1); // Navigate to Schedule screen (index 1)
+        widget.onNavigate(1);
       },
     );
   }
@@ -1268,7 +1637,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             title: 'Add Class',
             color: Colors.green,
             onTap: () {
-              widget.onNavigate(1); // Navigate to Schedule screen (index 1)
+              widget.onNavigate(1);
             },
           ),
         ),
@@ -1279,7 +1648,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             title: 'Assignments',
             color: Colors.orange,
             onTap: () {
-              widget.onNavigate(2); // Navigate to Assignments screen (index 2)
+              widget.onNavigate(2);
             },
           ),
         ),
@@ -1290,7 +1659,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             title: 'Notifications',
             color: Colors.purple,
             onTap: () {
-              widget.onNavigate(3); // Navigate to Notifications screen (index 3)
+              widget.onNavigate(3);
             },
           ),
         ),
@@ -1381,7 +1750,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               width: double.infinity,
               child: TextButton(
                 onPressed: () {
-                  widget.onNavigate(3); // Navigate to Notifications screen (index 3)
+                  widget.onNavigate(3);
                 },
                 child: Text(
                   'View All Notifications',
@@ -1409,6 +1778,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
       subtitle: Text(subtitle, style: GoogleFonts.poppins()),
       trailing: const Icon(Icons.arrow_forward_ios, size: 16),
     );
+  }
+
+  Color _getRoleColor(String role) {
+    switch (role) {
+      case 'Teacher':
+        return Colors.red;
+      case 'CR':
+        return Colors.orange;
+      case 'Student':
+        return Colors.green;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  String _getGreetingMessage() {
+    if (_todayClasses.isNotEmpty) {
+      return 'You have ${_todayClasses.length} ${_todayClasses.length == 1 ? 'class' : 'classes'} today.';
+    } else if (_tomorrowClasses.isNotEmpty) {
+      return 'No more classes today. ${_tomorrowClasses.length} ${_tomorrowClasses.length == 1 ? 'class' : 'classes'} scheduled for tomorrow.';
+    } else if (_rescheduledClasses.isNotEmpty) {
+      return 'You have ${_rescheduledClasses.length} rescheduled ${_rescheduledClasses.length == 1 ? 'class' : 'classes'}.';
+    } else {
+      return 'No upcoming classes. Join a classroom to see classes!';
+    }
   }
 
   Color _getColorForType(ClassType type) {
@@ -1440,4 +1834,68 @@ class _DashboardScreenState extends State<DashboardScreen> {
         return Icons.record_voice_over;
     }
   }
+}
+
+class ClassEvent {
+  final String id;
+  final String baseClassId;
+  final String title;
+  final String time;
+  final String location;
+  final String instructor;
+  final ClassType type;
+  final bool isRecurring;
+  final DateTime date;
+  final String teacherUid;
+  final String classroomId;
+  final String classroomName;
+  final String classCode;
+
+  ClassEvent({
+    required this.id,
+    required this.baseClassId,
+    required this.title,
+    required this.time,
+    required this.location,
+    required this.instructor,
+    required this.type,
+    this.isRecurring = false,
+    required this.date,
+    required this.teacherUid,
+    required this.classroomId,
+    required this.classroomName,
+    required this.classCode,
+  });
+
+  factory ClassEvent.fromMap(Map<String, dynamic> map) {
+    try {
+      return ClassEvent(
+        id: map['id']?.toString() ?? '',
+        baseClassId: map['baseClassId']?.toString() ?? map['id']?.toString().split('_')[0] ?? '',
+        title: map['title']?.toString() ?? '',
+        time: map['time']?.toString() ?? '',
+        location: map['location']?.toString() ?? '',
+        instructor: map['instructor']?.toString() ?? '',
+        type: ClassType.values[map['type'] is int ? map['type'] : 0],
+        isRecurring: map['isRecurring'] ?? false,
+        date: (map['date'] as Timestamp).toDate(),
+        teacherUid: map['teacherUid']?.toString() ?? '',
+        classroomId: map['classroomId']?.toString() ?? '',
+        classroomName: map['classroomName']?.toString() ?? '',
+        classCode: map['classCode']?.toString() ?? '',
+      );
+    } catch (e) {
+      print('Error creating ClassEvent from map: $e');
+      print('Map data: $map');
+      rethrow;
+    }
+  }
+}
+
+enum ClassType {
+  lecture,
+  lab,
+  tutorial,
+  discussion,
+  seminar,
 }
