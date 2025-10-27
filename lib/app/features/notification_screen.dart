@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class NotificationScreen extends StatefulWidget {
   const NotificationScreen({super.key});
@@ -13,145 +15,230 @@ class _NotificationScreenState extends State<NotificationScreen> with SingleTick
   late TabController _tabController;
   final List<AppNotification> _notifications = [];
   final List<AppNotification> _readNotifications = [];
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  StreamSubscription? _notificationsSubscription;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    _loadNotifications();
+    _setupNotificationsListener();
   }
 
-  void _loadNotifications() {
-    // Sample notification data
-    setState(() {
-      _notifications.addAll([
-        AppNotification(
-          id: '1',
-          title: 'Class Rescheduled',
-          message: 'Mathematics class has been moved to Room 305 today at 10:00 AM',
-          type: NotificationType.classUpdate,
-          timestamp: DateTime.now().subtract(const Duration(minutes: 15)),
-          isRead: false,
-          priority: Priority.high,
-        ),
-        AppNotification(
-          id: '2',
-          title: 'New Assignment Posted',
-          message: 'CS Assignment 3 has been posted. Due date: May 20, 2023',
-          type: NotificationType.assignment,
-          timestamp: DateTime.now().subtract(const Duration(hours: 2)),
-          isRead: false,
-          priority: Priority.medium,
-        ),
-        AppNotification(
-          id: '3',
-          title: 'Test Reminder',
-          message: 'Literature test is scheduled for this Friday. Don\'t forget to prepare!',
-          type: NotificationType.test,
-          timestamp: DateTime.now().subtract(const Duration(hours: 5)),
-          isRead: false,
-          priority: Priority.medium,
-        ),
-        AppNotification(
-          id: '4',
-          title: 'Office Hours Changed',
-          message: 'Professor Smith\'s office hours have been changed to 3-5 PM on Tuesdays',
-          type: NotificationType.general,
-          timestamp: DateTime.now().subtract(const Duration(days: 1)),
-          isRead: false,
-          priority: Priority.low,
-        ),
-      ]);
+  @override
+  void dispose() {
+    _notificationsSubscription?.cancel();
+    _tabController.dispose();
+    super.dispose();
+  }
 
-      _readNotifications.addAll([
-        AppNotification(
-          id: '5',
-          title: 'Grade Posted',
-          message: 'Your Mathematics midterm grade has been posted to the portal',
-          type: NotificationType.grade,
-          timestamp: DateTime.now().subtract(const Duration(days: 2)),
-          isRead: true,
-          priority: Priority.medium,
-        ),
-        AppNotification(
-          id: '6',
-          title: 'Library Book Due',
-          message: 'Your library book "Introduction to Algorithms" is due tomorrow',
-          type: NotificationType.reminder,
-          timestamp: DateTime.now().subtract(const Duration(days: 3)),
-          isRead: true,
-          priority: Priority.low,
-        ),
-        AppNotification(
-          id: '7',
-          title: 'Campus Event',
-          message: 'Tech Symposium happening this weekend. Register now!',
-          type: NotificationType.event,
-          timestamp: DateTime.now().subtract(const Duration(days: 4)),
-          isRead: true,
-          priority: Priority.low,
-        ),
-      ]);
+  void _setupNotificationsListener() {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    _notificationsSubscription = _firestore
+        .collection('notifications')
+        .where('userId', isEqualTo: user.uid)
+        .where('isActive', isEqualTo: true)
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .listen((snapshot) {
+      _processNotifications(snapshot.docs);
     });
   }
 
-  void _markAsRead(AppNotification notification) {
-    setState(() {
-      _notifications.remove(notification);
-      _readNotifications.add(notification.copyWith(isRead: true));
-    });
+  void _processNotifications(List<QueryDocumentSnapshot> docs) {
+    final now = DateTime.now();
+    List<AppNotification> unreadNotifications = [];
+    List<AppNotification> readNotifications = [];
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Notification marked as read'),
-        backgroundColor: Colors.green,
-      ),
+    for (final doc in docs) {
+      final data = doc.data() as Map<String, dynamic>;
+
+      // Check if notification should be expired
+      if (_shouldExpireNotification(data, now)) {
+        _markNotificationAsInactive(doc.id);
+        continue;
+      }
+
+      final notification = _createNotificationFromData(data, doc.id);
+
+      if (notification.isRead) {
+        readNotifications.add(notification);
+      } else {
+        unreadNotifications.add(notification);
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _notifications.clear();
+        _notifications.addAll(unreadNotifications);
+        _readNotifications.clear();
+        _readNotifications.addAll(readNotifications);
+      });
+    }
+  }
+
+  bool _shouldExpireNotification(Map<String, dynamic> data, DateTime now) {
+    final type = data['type'] as String?;
+    final createdAt = (data['createdAt'] as Timestamp).toDate();
+
+    if (type == 'assignment') {
+      final dueDate = (data['dueDate'] as Timestamp?)?.toDate();
+      if (dueDate != null && dueDate.isBefore(now)) {
+        return true;
+      }
+    }
+    else if (type == 'class_reschedule') {
+      final classDate = (data['classDate'] as Timestamp?)?.toDate();
+      if (classDate != null && classDate.isBefore(now)) {
+        return true;
+      }
+    }
+
+    // Keep other notifications for 30 days
+    return createdAt.isBefore(now.subtract(const Duration(days: 30)));
+  }
+
+  Future<void> _markNotificationAsInactive(String notificationId) async {
+    try {
+      await _firestore.collection('notifications').doc(notificationId).update({
+        'isActive': false,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      print('Error marking notification as inactive: $e');
+    }
+  }
+
+  AppNotification _createNotificationFromData(Map<String, dynamic> data, String id) {
+    final typeString = data['type'] as String? ?? 'general';
+    final priorityString = data['priority'] as String? ?? 'medium';
+
+    return AppNotification(
+      id: id,
+      title: data['title'] as String? ?? 'Notification',
+      message: data['message'] as String? ?? '',
+      type: _parseNotificationType(typeString),
+      timestamp: (data['createdAt'] as Timestamp).toDate(),
+      isRead: data['isRead'] as bool? ?? false,
+      priority: _parsePriority(priorityString),
+      relatedId: data['relatedId'] as String?,
+      classroomId: data['classroomId'] as String?,
+      dueDate: (data['dueDate'] as Timestamp?)?.toDate(),
+      classDate: (data['classDate'] as Timestamp?)?.toDate(),
     );
   }
 
-  void _markAllAsRead() {
+  NotificationType _parseNotificationType(String type) {
+    switch (type) {
+      case 'assignment':
+        return NotificationType.assignment;
+      case 'class_reschedule':
+        return NotificationType.classUpdate;
+      case 'test':
+        return NotificationType.test;
+      case 'grade':
+        return NotificationType.grade;
+      case 'reminder':
+        return NotificationType.reminder;
+      case 'event':
+        return NotificationType.event;
+      default:
+        return NotificationType.general;
+    }
+  }
+
+  Priority _parsePriority(String priority) {
+    switch (priority) {
+      case 'high':
+        return Priority.high;
+      case 'low':
+        return Priority.low;
+      default:
+        return Priority.medium;
+    }
+  }
+
+  Future<void> _markAsRead(AppNotification notification) async {
+    try {
+      await _firestore.collection('notifications').doc(notification.id).update({
+        'isRead': true,
+        'readAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      print('Error marking notification as read: $e');
+      // Fallback: update locally
+      setState(() {
+        _notifications.remove(notification);
+        _readNotifications.add(notification.copyWith(isRead: true));
+      });
+    }
+  }
+
+  Future<void> _markAllAsRead() async {
     if (_notifications.isEmpty) return;
 
-    setState(() {
-      _readNotifications.addAll(_notifications.map((n) => n.copyWith(isRead: true)));
-      _notifications.clear();
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('All notifications marked as read'),
-        backgroundColor: Colors.green,
-      ),
-    );
+    try {
+      final batch = _firestore.batch();
+      for (final notification in _notifications) {
+        final docRef = _firestore.collection('notifications').doc(notification.id);
+        batch.update(docRef, {
+          'isRead': true,
+          'readAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+      await batch.commit();
+    } catch (e) {
+      print('Error marking all as read: $e');
+      // Fallback: update locally
+      setState(() {
+        _readNotifications.addAll(_notifications.map((n) => n.copyWith(isRead: true)));
+        _notifications.clear();
+      });
+    }
   }
 
-  void _deleteNotification(AppNotification notification, bool isUnread) {
-    setState(() {
-      if (isUnread) {
-        _notifications.remove(notification);
-      } else {
-        _readNotifications.remove(notification);
-      }
-    });
+  Future<void> _deleteNotification(AppNotification notification, bool isUnread) async {
+    try {
+      await _markNotificationAsInactive(notification.id);
+    } catch (e) {
+      print('Error deleting notification: $e');
+      // Fallback: remove locally
+      setState(() {
+        if (isUnread) {
+          _notifications.remove(notification);
+        } else {
+          _readNotifications.remove(notification);
+        }
+      });
+    }
+  }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Notification deleted'),
-        backgroundColor: Colors.blue,
-        action: SnackBarAction(
-          label: 'Undo',
-          onPressed: () {
-            setState(() {
-              if (isUnread) {
-                _notifications.add(notification);
-              } else {
-                _readNotifications.add(notification);
-              }
-            });
-          },
-        ),
-      ),
-    );
+  Future<void> _clearAllRead() async {
+    if (_readNotifications.isEmpty) return;
+
+    try {
+      final batch = _firestore.batch();
+      for (final notification in _readNotifications) {
+        final docRef = _firestore.collection('notifications').doc(notification.id);
+        batch.update(docRef, {
+          'isActive': false,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+      await batch.commit();
+    } catch (e) {
+      print('Error clearing all read: $e');
+      // Fallback: clear locally
+      setState(() {
+        _readNotifications.clear();
+      });
+    }
   }
 
   void _showNotificationDetails(AppNotification notification) {
@@ -159,21 +246,6 @@ class _NotificationScreenState extends State<NotificationScreen> with SingleTick
       context: context,
       isScrollControlled: true,
       builder: (context) => NotificationDetailsBottomSheet(notification: notification),
-    );
-  }
-
-  void _clearAllRead() {
-    if (_readNotifications.isEmpty) return;
-
-    setState(() {
-      _readNotifications.clear();
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('All read notifications cleared'),
-        backgroundColor: Colors.blue,
-      ),
     );
   }
 
@@ -235,9 +307,9 @@ class _NotificationScreenState extends State<NotificationScreen> with SingleTick
           )
               : RefreshIndicator(
             onRefresh: () async {
-              // Simulate refresh
-              await Future.delayed(const Duration(seconds: 1));
-              setState(() {});
+              // Force reload by resetting the listener
+              _setupNotificationsListener();
+              return Future.delayed(const Duration(seconds: 1));
             },
             child: ListView.builder(
               padding: const EdgeInsets.all(16),
@@ -322,6 +394,8 @@ class NotificationCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final timeAgo = _getTimeAgo(notification.timestamp);
+    final hasDueDate = notification.dueDate != null;
+    final hasClassDate = notification.classDate != null;
 
     return Dismissible(
       key: Key(notification.id),
@@ -410,6 +484,30 @@ class NotificationCard extends StatelessWidget {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
+
+                      // Due Date or Class Date (if available)
+                      if (hasDueDate || hasClassDate) ...[
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.calendar_today,
+                              size: 12,
+                              color: _getNotificationColor(notification.type),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              _getDateInfo(notification),
+                              style: GoogleFonts.poppins(
+                                fontSize: 12,
+                                color: _getNotificationColor(notification.type),
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+
                       const SizedBox(height: 8),
                       // Time and Actions
                       Row(
@@ -464,6 +562,15 @@ class NotificationCard extends StatelessWidget {
     return DateFormat('MMM d').format(timestamp);
   }
 
+  String _getDateInfo(AppNotification notification) {
+    if (notification.dueDate != null) {
+      return 'Due: ${DateFormat('MMM d, yyyy').format(notification.dueDate!)}';
+    } else if (notification.classDate != null) {
+      return 'Class: ${DateFormat('MMM d, yyyy').format(notification.classDate!)}';
+    }
+    return '';
+  }
+
   IconData _getNotificationIcon(NotificationType type) {
     switch (type) {
       case NotificationType.classUpdate:
@@ -510,6 +617,9 @@ class NotificationDetailsBottomSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final hasDueDate = notification.dueDate != null;
+    final hasClassDate = notification.classDate != null;
+
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: const BoxDecoration(
@@ -576,6 +686,26 @@ class NotificationDetailsBottomSheet extends StatelessWidget {
               ),
             ],
           ),
+
+          // Due Date or Class Date
+          if (hasDueDate || hasClassDate) ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Icon(Icons.calendar_today, size: 16, color: _getNotificationColor(notification.type)),
+                const SizedBox(width: 4),
+                Text(
+                  _getDateInfo(notification),
+                  style: GoogleFonts.poppins(
+                    fontSize: 14,
+                    color: _getNotificationColor(notification.type),
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ],
+
           const SizedBox(height: 24),
           // Message
           Text(
@@ -645,6 +775,15 @@ class NotificationDetailsBottomSheet extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  String _getDateInfo(AppNotification notification) {
+    if (notification.dueDate != null) {
+      return 'Due Date: ${DateFormat('EEEE, MMMM d, yyyy').format(notification.dueDate!)}';
+    } else if (notification.classDate != null) {
+      return 'Class Date: ${DateFormat('EEEE, MMMM d, yyyy').format(notification.classDate!)}';
+    }
+    return '';
   }
 
   IconData _getNotificationIcon(NotificationType type) {
@@ -726,6 +865,10 @@ class AppNotification {
   final DateTime timestamp;
   final bool isRead;
   final Priority priority;
+  final String? relatedId;
+  final String? classroomId;
+  final DateTime? dueDate;
+  final DateTime? classDate;
 
   AppNotification({
     required this.id,
@@ -735,6 +878,10 @@ class AppNotification {
     required this.timestamp,
     required this.isRead,
     required this.priority,
+    this.relatedId,
+    this.classroomId,
+    this.dueDate,
+    this.classDate,
   });
 
   AppNotification copyWith({
@@ -745,6 +892,10 @@ class AppNotification {
     DateTime? timestamp,
     bool? isRead,
     Priority? priority,
+    String? relatedId,
+    String? classroomId,
+    DateTime? dueDate,
+    DateTime? classDate,
   }) {
     return AppNotification(
       id: id ?? this.id,
@@ -754,6 +905,10 @@ class AppNotification {
       timestamp: timestamp ?? this.timestamp,
       isRead: isRead ?? this.isRead,
       priority: priority ?? this.priority,
+      relatedId: relatedId ?? this.relatedId,
+      classroomId: classroomId ?? this.classroomId,
+      dueDate: dueDate ?? this.dueDate,
+      classDate: classDate ?? this.classDate,
     );
   }
 }
