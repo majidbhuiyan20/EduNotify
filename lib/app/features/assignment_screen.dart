@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 
@@ -11,113 +13,323 @@ class AssignmentScreen extends StatefulWidget {
 
 class _AssignmentScreenState extends State<AssignmentScreen> with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
   final List<Assignment> _assignments = [];
   final List<Assignment> _completedAssignments = [];
+  String? _userRole;
+  String? _selectedClassroomId;
+  List<Map<String, dynamic>> _classrooms = [];
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    _loadAssignments();
+    _loadUserData();
   }
 
-  void _loadAssignments() {
-    // Sample data
-    setState(() {
-      _assignments.addAll([
-        Assignment(
-          id: '1',
-          title: 'Mathematics Problem Set 5',
-          subject: 'Mathematics',
-          dueDate: DateTime.now().add(const Duration(days: 2)),
-          description: 'Complete chapters 5-7 problems. Show all your work and calculations.',
-          status: AssignmentStatus.pending,
-          priority: Priority.high,
-        ),
-        Assignment(
-          id: '2',
-          title: 'Literature Essay: Modern Poetry',
-          subject: 'Literature',
-          dueDate: DateTime.now().add(const Duration(days: 5)),
-          description: 'Write a 1500-word essay analyzing the themes in modern poetry.',
-          status: AssignmentStatus.pending,
-          priority: Priority.medium,
-        ),
-        Assignment(
-          id: '3',
-          title: 'Computer Science Project',
-          subject: 'Computer Science',
-          dueDate: DateTime.now().add(const Duration(hours: 12)),
-          description: 'Complete the Flutter UI implementation for the final project.',
-          status: AssignmentStatus.pending,
-          priority: Priority.high,
-        ),
-        Assignment(
-          id: '4',
-          title: 'History Research Paper',
-          subject: 'History',
-          dueDate: DateTime.now().add(const Duration(days: 7)),
-          description: 'Research paper on World War II impacts (2500 words minimum).',
-          status: AssignmentStatus.pending,
-          priority: Priority.medium,
-        ),
-      ]);
+  Future<void> _loadUserData() async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      setState(() {
+        _isLoading = false;
+      });
+      return;
+    }
 
-      _completedAssignments.addAll([
-        Assignment(
-          id: '5',
-          title: 'Physics Lab Report',
-          subject: 'Physics',
-          dueDate: DateTime.now().subtract(const Duration(days: 3)),
-          description: 'Lab report on Newton\'s Laws of Motion experiment.',
-          status: AssignmentStatus.completed,
-          priority: Priority.low,
-          completedDate: DateTime.now().subtract(const Duration(days: 4)),
-        ),
-        Assignment(
-          id: '6',
-          title: 'Biology Worksheet',
-          subject: 'Biology',
-          dueDate: DateTime.now().subtract(const Duration(days: 1)),
-          description: 'Complete the cell biology worksheet questions.',
-          status: AssignmentStatus.completed,
-          priority: Priority.low,
-          completedDate: DateTime.now().subtract(const Duration(days: 2)),
-        ),
-      ]);
-    });
+    try {
+      final userDoc = await _firestore.collection('users').doc(user.uid).get();
+      final userData = userDoc.data();
+      setState(() {
+        _userRole = userData?['role'] ?? 'Student';
+      });
+
+      await _loadClassrooms();
+      await _loadAssignments();
+    } catch (e) {
+      print('Error loading user data: $e');
+      setState(() {
+        _isLoading = false;
+      });
+    }
   }
 
-  void _markAsCompleted(Assignment assignment) {
-    setState(() {
-      _assignments.remove(assignment);
-      _completedAssignments.add(assignment.copyWith(
-        status: AssignmentStatus.completed,
-        completedDate: DateTime.now(),
-      ));
-    });
+  Future<void> _loadClassrooms() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
 
+    try {
+      List<Map<String, dynamic>> classrooms = [];
+
+      if (_userRole == 'Teacher' || _userRole == 'CR') {
+        final teacherClassrooms = await _firestore
+            .collection('classrooms')
+            .where('createdBy', isEqualTo: user.uid)
+            .where('isActive', isEqualTo: true)
+            .get();
+
+        for (final doc in teacherClassrooms.docs) {
+          classrooms.add({
+            'id': doc.id,
+            ...doc.data(),
+          });
+        }
+      } else if (_userRole == 'Student') {
+        final userDoc = await _firestore.collection('users').doc(user.uid).get();
+        final userData = userDoc.data();
+        final enrolledClassrooms = List<String>.from(userData?['enrolledClassrooms'] ?? []);
+
+        if (enrolledClassrooms.isNotEmpty) {
+          final studentClassrooms = await _firestore
+              .collection('classrooms')
+              .where(FieldPath.documentId, whereIn: enrolledClassrooms)
+              .where('isActive', isEqualTo: true)
+              .get();
+
+          for (final doc in studentClassrooms.docs) {
+            classrooms.add({
+              'id': doc.id,
+              ...doc.data(),
+            });
+          }
+        }
+      }
+
+      setState(() {
+        _classrooms = classrooms;
+        if (_selectedClassroomId == null && classrooms.isNotEmpty) {
+          _selectedClassroomId = classrooms.first['id'];
+        }
+      });
+    } catch (e) {
+      print('Error loading classrooms: $e');
+    }
+  }
+
+  Future<void> _loadAssignments() async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      setState(() {
+        _isLoading = false;
+      });
+      return;
+    }
+
+    try {
+      List<Assignment> allAssignments = [];
+
+      if (_userRole == 'Teacher' || _userRole == 'CR') {
+        // Load assignments created by teacher
+        Query assignmentsQuery = _firestore
+            .collection('assignments')
+            .where('teacherUid', isEqualTo: user.uid);
+
+        if (_selectedClassroomId != null && _selectedClassroomId!.isNotEmpty) {
+          assignmentsQuery = assignmentsQuery.where('classroomId', isEqualTo: _selectedClassroomId);
+        }
+
+        final teacherAssignments = await assignmentsQuery.get();
+
+        for (final doc in teacherAssignments.docs) {
+          try {
+            final data = doc.data() as Map<String, dynamic>?;
+            if (data != null) {
+              final assignment = Assignment.fromMap(data);
+              allAssignments.add(assignment);
+            }
+          } catch (e) {
+            print('Error processing teacher assignment: $e');
+          }
+        }
+      } else if (_userRole == 'Student') {
+        // Load assignments from enrolled classrooms
+        final userDoc = await _firestore.collection('users').doc(user.uid).get();
+        final userData = userDoc.data();
+        final enrolledClassrooms = List<String>.from(userData?['enrolledClassrooms'] ?? []);
+
+        final classroomsToLoad = _selectedClassroomId != null && _selectedClassroomId!.isNotEmpty
+            ? [_selectedClassroomId!]
+            : enrolledClassrooms;
+
+        for (final classroomId in classroomsToLoad) {
+          try {
+            final classroomAssignments = await _firestore
+                .collection('assignments')
+                .where('classroomId', isEqualTo: classroomId)
+                .get();
+
+            for (final doc in classroomAssignments.docs) {
+              try {
+                final data = doc.data() as Map<String, dynamic>?;
+                if (data != null) {
+                  final assignment = Assignment.fromMap(data);
+                  allAssignments.add(assignment);
+                }
+              } catch (e) {
+                print('Error processing classroom assignment: $e');
+              }
+            }
+          } catch (e) {
+            print('Error loading classroom $classroomId assignments: $e');
+          }
+        }
+
+        // Load student's submission status
+        final studentSubmissions = await _firestore
+            .collection('assignment_submissions')
+            .where('studentUid', isEqualTo: user.uid)
+            .get();
+
+        final submissionMap = <String, bool>{};
+        for (final doc in studentSubmissions.docs) {
+          final data = doc.data();
+          submissionMap[data['assignmentId']] = data['isCompleted'] ?? false;
+        }
+
+        // Update assignment status based on submissions
+        for (final assignment in allAssignments) {
+          if (submissionMap[assignment.id] == true) {
+            assignment.status = AssignmentStatus.completed;
+          }
+        }
+      }
+
+      // Separate pending and completed assignments
+      final pendingAssignments = allAssignments
+          .where((assignment) => assignment.status == AssignmentStatus.pending)
+          .toList();
+
+      final completedAssignments = allAssignments
+          .where((assignment) => assignment.status == AssignmentStatus.completed)
+          .toList();
+
+      setState(() {
+        _assignments.clear();
+        _completedAssignments.clear();
+        _assignments.addAll(pendingAssignments);
+        _completedAssignments.addAll(completedAssignments);
+        _isLoading = false;
+      });
+
+    } catch (e) {
+      print('Error loading assignments: $e');
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _markAsCompleted(Assignment assignment) async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    try {
+      if (_userRole == 'Student') {
+        // For students, create/update submission record
+        await _firestore
+            .collection('assignment_submissions')
+            .doc('${assignment.id}_${user.uid}')
+            .set({
+          'assignmentId': assignment.id,
+          'studentUid': user.uid,
+          'studentName': user.displayName ?? 'Student',
+          'isCompleted': true,
+          'completedAt': FieldValue.serverTimestamp(),
+          'classroomId': assignment.classroomId,
+          'classroomName': assignment.classroomName,
+        }, SetOptions(merge: true));
+      }
+
+      setState(() {
+        _assignments.remove(assignment);
+        assignment.status = AssignmentStatus.completed;
+        _completedAssignments.add(assignment);
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${assignment.title} marked as completed!'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      print('Error marking assignment as completed: $e');
+      _showErrorSnackBar('Failed to mark assignment as completed');
+    }
+  }
+
+  Future<void> _markAsPending(Assignment assignment) async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    try {
+      if (_userRole == 'Student') {
+        // For students, update submission record
+        await _firestore
+            .collection('assignment_submissions')
+            .doc('${assignment.id}_${user.uid}')
+            .update({
+          'isCompleted': false,
+        });
+      }
+
+      setState(() {
+        _completedAssignments.remove(assignment);
+        assignment.status = AssignmentStatus.pending;
+        _assignments.add(assignment);
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${assignment.title} moved to pending.'),
+          backgroundColor: Colors.blue,
+        ),
+      );
+    } catch (e) {
+      print('Error marking assignment as pending: $e');
+      _showErrorSnackBar('Failed to mark assignment as pending');
+    }
+  }
+
+  Future<void> _deleteAssignment(Assignment assignment) async {
+    try {
+      await _firestore.collection('assignments').doc(assignment.id).delete();
+
+      // Also delete related submissions
+      final submissions = await _firestore
+          .collection('assignment_submissions')
+          .where('assignmentId', isEqualTo: assignment.id)
+          .get();
+
+      final batch = _firestore.batch();
+      for (final doc in submissions.docs) {
+        batch.delete(doc.reference);
+      }
+      await batch.commit();
+
+      setState(() {
+        _assignments.remove(assignment);
+        _completedAssignments.remove(assignment);
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${assignment.title} deleted successfully!'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      print('Error deleting assignment: $e');
+      _showErrorSnackBar('Failed to delete assignment');
+    }
+  }
+
+  void _showErrorSnackBar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('${assignment.title} marked as completed!'),
-        backgroundColor: Colors.green,
-      ),
-    );
-  }
-
-  void _markAsPending(Assignment assignment) {
-    setState(() {
-      _completedAssignments.remove(assignment);
-      _assignments.add(assignment.copyWith(
-        status: AssignmentStatus.pending,
-        completedDate: null,
-      ));
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('${assignment.title} moved to pending.'),
-        backgroundColor: Colors.blue,
+        content: Text(message),
+        backgroundColor: Colors.red,
       ),
     );
   }
@@ -128,12 +340,16 @@ class _AssignmentScreenState extends State<AssignmentScreen> with SingleTickerPr
       isScrollControlled: true,
       builder: (context) => AssignmentDetailsBottomSheet(
         assignment: assignment,
+        userRole: _userRole,
         onStatusChanged: () {
           if (assignment.status == AssignmentStatus.pending) {
             _markAsCompleted(assignment);
           } else {
             _markAsPending(assignment);
           }
+        },
+        onDelete: () {
+          _deleteAssignment(assignment);
           Navigator.pop(context);
         },
       ),
@@ -141,9 +357,16 @@ class _AssignmentScreenState extends State<AssignmentScreen> with SingleTickerPr
   }
 
   void _showAddAssignmentDialog() {
+    if (_classrooms.isEmpty) {
+      _showErrorSnackBar('Please create a classroom first');
+      return;
+    }
+
     showDialog(
       context: context,
       builder: (context) => AddAssignmentDialog(
+        classrooms: _classrooms,
+        selectedClassroomId: _selectedClassroomId,
         onAssignmentAdded: (newAssignment) {
           setState(() {
             _assignments.add(newAssignment);
@@ -151,6 +374,13 @@ class _AssignmentScreenState extends State<AssignmentScreen> with SingleTickerPr
         },
       ),
     );
+  }
+
+  void _onClassroomSelected(String? classroomId) {
+    setState(() {
+      _selectedClassroomId = classroomId;
+    });
+    _loadAssignments();
   }
 
   @override
@@ -181,50 +411,142 @@ class _AssignmentScreenState extends State<AssignmentScreen> with SingleTickerPr
           ],
         ),
       ),
-      body: TabBarView(
-        controller: _tabController,
+      body: _isLoading
+          ? Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 16),
+            Text('Loading assignments...', style: GoogleFonts.poppins()),
+          ],
+        ),
+      )
+          : Column(
         children: [
-          // Pending Assignments Tab
-          _assignments.isEmpty
-              ? _buildEmptyState('No pending assignments', Icons.assignment_turned_in)
-              : ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: _assignments.length,
-            itemBuilder: (context, index) {
-              return AssignmentCard(
-                assignment: _assignments[index],
-                onTap: () => _showAssignmentDetails(_assignments[index]),
-                onComplete: () => _markAsCompleted(_assignments[index]),
-              );
-            },
-          ),
+          // Classroom Selector
+          if (_classrooms.isNotEmpty) ...[
+            Card(
+              margin: EdgeInsets.all(12),
+              child: Padding(
+                padding: const EdgeInsets.all(12.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.school, size: 20, color: Colors.blue),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            'Classroom Filter',
+                            style: GoogleFonts.poppins(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      value: _selectedClassroomId,
+                      decoration: InputDecoration(
+                        border: OutlineInputBorder(),
+                        hintText: 'Select a classroom',
+                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      ),
+                      items: [
+                        DropdownMenuItem<String>(
+                          value: null,
+                          child: Text('All Classrooms', style: GoogleFonts.poppins()),
+                        ),
+                        ..._classrooms.map<DropdownMenuItem<String>>((classroom) {
+                          return DropdownMenuItem<String>(
+                            value: classroom['id'] as String?,
+                            child: Text(
+                              classroom['className'],
+                              style: GoogleFonts.poppins(),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          );
+                        }).toList(),
+                      ],
+                      onChanged: _onClassroomSelected,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                // Pending Assignments Tab
+                _assignments.isEmpty
+                    ? _buildEmptyState(
+                  'No pending assignments',
+                  Icons.assignment_turned_in,
+                  _userRole == 'Student'
+                      ? 'No assignments from your classrooms'
+                      : 'Create assignments for your students',
+                )
+                    : RefreshIndicator(
+                  onRefresh: _loadAssignments,
+                  child: ListView.builder(
+                    padding: const EdgeInsets.all(16),
+                    itemCount: _assignments.length,
+                    itemBuilder: (context, index) {
+                      return AssignmentCard(
+                        assignment: _assignments[index],
+                        userRole: _userRole,
+                        onTap: () => _showAssignmentDetails(_assignments[index]),
+                        onComplete: () => _markAsCompleted(_assignments[index]),
+                      );
+                    },
+                  ),
+                ),
 
-          // Completed Assignments Tab
-          _completedAssignments.isEmpty
-              ? _buildEmptyState('No completed assignments', Icons.assignment_turned_in)
-              : ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: _completedAssignments.length,
-            itemBuilder: (context, index) {
-              return CompletedAssignmentCard(
-                assignment: _completedAssignments[index],
-                onTap: () => _showAssignmentDetails(_completedAssignments[index]),
-                onReopen: () => _markAsPending(_completedAssignments[index]),
-              );
-            },
+                // Completed Assignments Tab
+                _completedAssignments.isEmpty
+                    ? _buildEmptyState(
+                  'No completed assignments',
+                  Icons.assignment_turned_in,
+                  'Completed assignments will appear here',
+                )
+                    : RefreshIndicator(
+                  onRefresh: _loadAssignments,
+                  child: ListView.builder(
+                    padding: const EdgeInsets.all(16),
+                    itemCount: _completedAssignments.length,
+                    itemBuilder: (context, index) {
+                      return CompletedAssignmentCard(
+                        assignment: _completedAssignments[index],
+                        userRole: _userRole,
+                        onTap: () => _showAssignmentDetails(_completedAssignments[index]),
+                        onReopen: () => _markAsPending(_completedAssignments[index]),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
+      floatingActionButton: (_userRole == 'Teacher' || _userRole == 'CR')
+          ? FloatingActionButton.extended(
         onPressed: _showAddAssignmentDialog,
         icon: const Icon(Icons.add),
         label: Text('Add Assignment', style: GoogleFonts.poppins()),
         backgroundColor: Colors.blue,
-      ),
+      )
+          : null,
     );
   }
 
-  Widget _buildEmptyState(String message, IconData icon) {
+  Widget _buildEmptyState(String message, IconData icon, String subtitle) {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -236,7 +558,17 @@ class _AssignmentScreenState extends State<AssignmentScreen> with SingleTickerPr
             style: GoogleFonts.poppins(
               color: Colors.grey,
               fontSize: 18,
+              fontWeight: FontWeight.w500,
             ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            subtitle,
+            style: GoogleFonts.poppins(
+              color: Colors.grey,
+              fontSize: 14,
+            ),
+            textAlign: TextAlign.center,
           ),
         ],
       ),
@@ -246,12 +578,14 @@ class _AssignmentScreenState extends State<AssignmentScreen> with SingleTickerPr
 
 class AssignmentCard extends StatelessWidget {
   final Assignment assignment;
+  final String? userRole;
   final VoidCallback onTap;
   final VoidCallback onComplete;
 
   const AssignmentCard({
     super.key,
     required this.assignment,
+    required this.userRole,
     required this.onTap,
     required this.onComplete,
   });
@@ -261,11 +595,13 @@ class AssignmentCard extends StatelessWidget {
     final daysRemaining = assignment.dueDate.difference(DateTime.now()).inDays;
     final hoursRemaining = assignment.dueDate.difference(DateTime.now()).inHours;
     final isDueSoon = daysRemaining <= 1;
+    final isOverdue = assignment.dueDate.isBefore(DateTime.now());
 
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       elevation: 2,
+      color: isOverdue ? Colors.red[50] : null,
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: onTap,
@@ -308,12 +644,29 @@ class AssignmentCard extends StatelessWidget {
                     DateFormat('MMM d').format(assignment.dueDate),
                     style: GoogleFonts.poppins(
                       fontSize: 14,
-                      color: Colors.grey[600],
+                      color: isOverdue ? Colors.red : Colors.grey[600],
                     ),
                   ),
                 ],
               ),
               const SizedBox(height: 12),
+              // Classroom Info (for students)
+              if (userRole == 'Student') ...[
+                Row(
+                  children: [
+                    Icon(Icons.school, size: 14, color: Colors.grey),
+                    SizedBox(width: 4),
+                    Text(
+                      assignment.classroomName,
+                      style: GoogleFonts.poppins(
+                        fontSize: 12,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: 8),
+              ],
               // Title
               Text(
                 assignment.title,
@@ -340,36 +693,43 @@ class AssignmentCard extends StatelessWidget {
               Row(
                 children: [
                   // Time Remaining
-                  Icon(Icons.access_time, size: 16, color: isDueSoon ? Colors.red : Colors.grey),
+                  Icon(
+                      Icons.access_time,
+                      size: 16,
+                      color: isOverdue ? Colors.red : (isDueSoon ? Colors.orange : Colors.grey)
+                  ),
                   const SizedBox(width: 4),
                   Text(
-                    isDueSoon
+                    isOverdue
+                        ? 'Overdue by ${-daysRemaining} days'
+                        : isDueSoon
                         ? 'Due in $hoursRemaining hours'
                         : 'Due in $daysRemaining days',
                     style: GoogleFonts.poppins(
                       fontSize: 12,
-                      color: isDueSoon ? Colors.red : Colors.grey[600],
+                      color: isOverdue ? Colors.red : (isDueSoon ? Colors.orange : Colors.grey[600]),
                     ),
                   ),
                   const Spacer(),
-                  // Complete Button
-                  ElevatedButton(
-                    onPressed: onComplete,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blue,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(20),
+                  // Complete Button (only for students)
+                  if (userRole == 'Student')
+                    ElevatedButton(
+                      onPressed: onComplete,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue,
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                      ),
+                      child: Text(
+                        'Complete',
+                        style: GoogleFonts.poppins(
+                          fontSize: 12,
+                          color: Colors.white,
+                        ),
                       ),
                     ),
-                    child: Text(
-                      'Complete',
-                      style: GoogleFonts.poppins(
-                        fontSize: 12,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
                 ],
               ),
             ],
@@ -398,6 +758,8 @@ class AssignmentCard extends StatelessWidget {
       'History': Colors.orange,
       'Physics': Colors.red,
       'Biology': Colors.green,
+      'Chemistry': Colors.deepPurple,
+      'Geography': Colors.brown,
     };
     return subjectColors[subject] ?? Colors.grey;
   }
@@ -405,12 +767,14 @@ class AssignmentCard extends StatelessWidget {
 
 class CompletedAssignmentCard extends StatelessWidget {
   final Assignment assignment;
+  final String? userRole;
   final VoidCallback onTap;
   final VoidCallback onReopen;
 
   const CompletedAssignmentCard({
     super.key,
     required this.assignment,
+    required this.userRole,
     required this.onTap,
     required this.onReopen,
   });
@@ -457,7 +821,9 @@ class CompletedAssignmentCard extends StatelessWidget {
                   const Spacer(),
                   // Completion Date
                   Text(
-                    DateFormat('MMM d').format(assignment.completedDate!),
+                    assignment.completedDate != null
+                        ? DateFormat('MMM d').format(assignment.completedDate!)
+                        : 'Completed',
                     style: GoogleFonts.poppins(
                       fontSize: 14,
                       color: Colors.grey[600],
@@ -466,6 +832,23 @@ class CompletedAssignmentCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 12),
+              // Classroom Info (for students)
+              if (userRole == 'Student') ...[
+                Row(
+                  children: [
+                    Icon(Icons.school, size: 14, color: Colors.grey),
+                    SizedBox(width: 4),
+                    Text(
+                      assignment.classroomName,
+                      style: GoogleFonts.poppins(
+                        fontSize: 12,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: 8),
+              ],
               // Title
               Text(
                 assignment.title,
@@ -509,22 +892,23 @@ class CompletedAssignmentCard extends StatelessWidget {
                     ),
                   ),
                   const Spacer(),
-                  // Reopen Button
-                  OutlinedButton(
-                    onPressed: onReopen,
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(20),
+                  // Reopen Button (only for students)
+                  if (userRole == 'Student')
+                    OutlinedButton(
+                      onPressed: onReopen,
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                      ),
+                      child: Text(
+                        'Reopen',
+                        style: GoogleFonts.poppins(
+                          fontSize: 12,
+                        ),
                       ),
                     ),
-                    child: Text(
-                      'Reopen',
-                      style: GoogleFonts.poppins(
-                        fontSize: 12,
-                      ),
-                    ),
-                  ),
                 ],
               ),
             ],
@@ -542,6 +926,8 @@ class CompletedAssignmentCard extends StatelessWidget {
       'History': Colors.orange,
       'Physics': Colors.red,
       'Biology': Colors.green,
+      'Chemistry': Colors.deepPurple,
+      'Geography': Colors.brown,
     };
     return subjectColors[subject] ?? Colors.grey;
   }
@@ -549,16 +935,22 @@ class CompletedAssignmentCard extends StatelessWidget {
 
 class AssignmentDetailsBottomSheet extends StatelessWidget {
   final Assignment assignment;
+  final String? userRole;
   final VoidCallback onStatusChanged;
+  final VoidCallback onDelete;
 
   const AssignmentDetailsBottomSheet({
     super.key,
     required this.assignment,
+    required this.userRole,
     required this.onStatusChanged,
+    required this.onDelete,
   });
 
   @override
   Widget build(BuildContext context) {
+    final isOverdue = assignment.dueDate.isBefore(DateTime.now());
+
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: const BoxDecoration(
@@ -610,16 +1002,36 @@ class AssignmentDetailsBottomSheet extends StatelessWidget {
                 ),
               ),
               const Spacer(),
-              Icon(Icons.calendar_today, size: 16, color: Colors.grey),
+              Icon(
+                  Icons.calendar_today,
+                  size: 16,
+                  color: isOverdue ? Colors.red : Colors.grey
+              ),
               const SizedBox(width: 4),
               Text(
                 DateFormat('MMM d, yyyy').format(assignment.dueDate),
                 style: GoogleFonts.poppins(
-                  color: Colors.grey[600],
+                  color: isOverdue ? Colors.red : Colors.grey[600],
                 ),
               ),
             ],
           ),
+          // Classroom Info
+          if (userRole == 'Student') ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Icon(Icons.school, size: 16, color: Colors.grey),
+                const SizedBox(width: 8),
+                Text(
+                  assignment.classroomName,
+                  style: GoogleFonts.poppins(
+                    color: Colors.grey[600],
+                  ),
+                ),
+              ],
+            ),
+          ],
           const SizedBox(height: 24),
           // Description
           Text(
@@ -667,31 +1079,80 @@ class AssignmentDetailsBottomSheet extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 32),
-          // Action Button
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: onStatusChanged,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: assignment.status == AssignmentStatus.pending
-                    ? Colors.blue
-                    : Colors.orange,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+          // Action Buttons
+          Row(
+            children: [
+              // Delete Button (only for teachers)
+              if ((userRole == 'Teacher' || userRole == 'CR') && assignment.status == AssignmentStatus.pending)
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () {
+                      showDialog(
+                        context: context,
+                        builder: (context) => AlertDialog(
+                          title: Text('Delete Assignment'),
+                          content: Text('Are you sure you want to delete "${assignment.title}"?'),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(context),
+                              child: Text('Cancel'),
+                            ),
+                            TextButton(
+                              onPressed: () {
+                                Navigator.pop(context);
+                                onDelete();
+                              },
+                              style: TextButton.styleFrom(foregroundColor: Colors.red),
+                              child: Text('Delete'),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: Text(
+                      'Delete',
+                      style: GoogleFonts.poppins(
+                        fontWeight: FontWeight.w600,
+                        color: Colors.red,
+                      ),
+                    ),
+                  ),
                 ),
-              ),
-              child: Text(
-                assignment.status == AssignmentStatus.pending
-                    ? 'Mark as Completed'
-                    : 'Mark as Pending',
-                style: GoogleFonts.poppins(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white,
+              if ((userRole == 'Teacher' || userRole == 'CR') && assignment.status == AssignmentStatus.pending)
+                const SizedBox(width: 12),
+              // Status Change Button (for students)
+              if (userRole == 'Student')
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: onStatusChanged,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: assignment.status == AssignmentStatus.pending
+                          ? Colors.blue
+                          : Colors.orange,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: Text(
+                      assignment.status == AssignmentStatus.pending
+                          ? 'Mark as Completed'
+                          : 'Mark as Pending',
+                      style: GoogleFonts.poppins(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
                 ),
-              ),
-            ),
+            ],
           ),
         ],
       ),
@@ -706,6 +1167,8 @@ class AssignmentDetailsBottomSheet extends StatelessWidget {
       'History': Colors.orange,
       'Physics': Colors.red,
       'Biology': Colors.green,
+      'Chemistry': Colors.deepPurple,
+      'Geography': Colors.brown,
     };
     return subjectColors[subject] ?? Colors.grey;
   }
@@ -734,9 +1197,16 @@ class AssignmentDetailsBottomSheet extends StatelessWidget {
 }
 
 class AddAssignmentDialog extends StatefulWidget {
+  final List<Map<String, dynamic>> classrooms;
+  final String? selectedClassroomId;
   final Function(Assignment) onAssignmentAdded;
 
-  const AddAssignmentDialog({super.key, required this.onAssignmentAdded});
+  const AddAssignmentDialog({
+    super.key,
+    required this.classrooms,
+    required this.selectedClassroomId,
+    required this.onAssignmentAdded,
+  });
 
   @override
   State<AddAssignmentDialog> createState() => _AddAssignmentDialogState();
@@ -747,8 +1217,12 @@ class _AddAssignmentDialogState extends State<AddAssignmentDialog> {
   final _titleController = TextEditingController();
   final _descriptionController = TextEditingController();
   final _subjectController = TextEditingController();
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+
   DateTime _dueDate = DateTime.now().add(const Duration(days: 7));
   Priority _priority = Priority.medium;
+  String? _selectedClassroomId;
 
   final List<String> _subjects = [
     'Mathematics',
@@ -760,6 +1234,13 @@ class _AddAssignmentDialogState extends State<AddAssignmentDialog> {
     'Chemistry',
     'Geography',
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedClassroomId = widget.selectedClassroomId ??
+        (widget.classrooms.isNotEmpty ? widget.classrooms.first['id'] : null);
+  }
 
   Future<void> _selectDueDate() async {
     final DateTime? picked = await showDatePicker(
@@ -775,20 +1256,74 @@ class _AddAssignmentDialogState extends State<AddAssignmentDialog> {
     }
   }
 
-  void _submitForm() {
+  Future<void> _submitForm() async {
     if (_formKey.currentState!.validate()) {
-      final newAssignment = Assignment(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
-        title: _titleController.text,
-        subject: _subjectController.text,
-        dueDate: _dueDate,
-        description: _descriptionController.text,
-        status: AssignmentStatus.pending,
-        priority: _priority,
-      );
+      final user = _auth.currentUser;
+      if (user == null || _selectedClassroomId == null) return;
 
-      widget.onAssignmentAdded(newAssignment);
-      Navigator.pop(context);
+      try {
+        // Get classroom data
+        final classroomDoc = await _firestore
+            .collection('classrooms')
+            .doc(_selectedClassroomId!)
+            .get();
+
+        final classroomData = classroomDoc.data();
+        if (classroomData == null) {
+          throw Exception('Classroom not found');
+        }
+
+        final assignmentId = DateTime.now().millisecondsSinceEpoch.toString();
+
+        // Create assignment in Firestore
+        await _firestore.collection('assignments').doc(assignmentId).set({
+          'id': assignmentId,
+          'title': _titleController.text,
+          'subject': _subjectController.text,
+          'dueDate': Timestamp.fromDate(_dueDate),
+          'description': _descriptionController.text,
+          'priority': _priority.index,
+          'status': AssignmentStatus.pending.index,
+          'teacherUid': user.uid,
+          'teacherName': user.displayName ?? 'Teacher',
+          'classroomId': _selectedClassroomId,
+          'classroomName': classroomData['className'],
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+
+        final newAssignment = Assignment(
+          id: assignmentId,
+          title: _titleController.text,
+          subject: _subjectController.text,
+          dueDate: _dueDate,
+          description: _descriptionController.text,
+          status: AssignmentStatus.pending,
+          priority: _priority,
+          teacherUid: user.uid,
+          teacherName: user.displayName ?? 'Teacher',
+          classroomId: _selectedClassroomId!,
+          classroomName: classroomData['className'],
+          createdAt: DateTime.now(),
+        );
+
+        widget.onAssignmentAdded(newAssignment);
+        Navigator.pop(context);
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Assignment created successfully!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      } catch (e) {
+        print('Error creating assignment: $e');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to create assignment: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -805,13 +1340,43 @@ class _AddAssignmentDialogState extends State<AddAssignmentDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Add New Assignment',
+                'Create New Assignment',
                 style: GoogleFonts.poppins(
                   fontSize: 20,
                   fontWeight: FontWeight.bold,
                 ),
               ),
               const SizedBox(height: 24),
+
+              // Classroom Selector
+              DropdownButtonFormField<String>(
+                value: _selectedClassroomId,
+                items: widget.classrooms.map((classroom) {
+                  return DropdownMenuItem<String>(
+                    value: classroom['id'] as String,
+                    child: Text(classroom['className']),
+                  );
+                }).toList(),
+                onChanged: (String? value) {
+                  setState(() {
+                    _selectedClassroomId = value;
+                  });
+                },
+                decoration: InputDecoration(
+                  labelText: 'Classroom',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Please select a classroom';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
+
               // Title Field
               TextFormField(
                 controller: _titleController,
@@ -829,6 +1394,7 @@ class _AddAssignmentDialogState extends State<AddAssignmentDialog> {
                 },
               ),
               const SizedBox(height: 16),
+
               // Subject Dropdown
               DropdownButtonFormField<String>(
                 value: _subjectController.text.isEmpty ? null : _subjectController.text,
@@ -857,6 +1423,7 @@ class _AddAssignmentDialogState extends State<AddAssignmentDialog> {
                 },
               ),
               const SizedBox(height: 16),
+
               // Due Date Picker
               InkWell(
                 onTap: _selectDueDate,
@@ -877,6 +1444,7 @@ class _AddAssignmentDialogState extends State<AddAssignmentDialog> {
                 ),
               ),
               const SizedBox(height: 16),
+
               // Priority Selector
               Text(
                 'Priority',
@@ -896,6 +1464,7 @@ class _AddAssignmentDialogState extends State<AddAssignmentDialog> {
                 ],
               ),
               const SizedBox(height: 16),
+
               // Description Field
               TextFormField(
                 controller: _descriptionController,
@@ -908,6 +1477,7 @@ class _AddAssignmentDialogState extends State<AddAssignmentDialog> {
                 ),
               ),
               const SizedBox(height: 24),
+
               // Action Buttons
               Row(
                 children: [
@@ -940,7 +1510,7 @@ class _AddAssignmentDialogState extends State<AddAssignmentDialog> {
                         ),
                       ),
                       child: Text(
-                        'Add Assignment',
+                        'Create Assignment',
                         style: GoogleFonts.poppins(
                           fontWeight: FontWeight.w600,
                           color: Colors.white,
@@ -994,14 +1564,19 @@ enum AssignmentStatus { pending, completed }
 enum Priority { low, medium, high }
 
 class Assignment {
-  final String id;
-  final String title;
-  final String subject;
-  final DateTime dueDate;
-  final String description;
-  final AssignmentStatus status;
-  final Priority priority;
-  final DateTime? completedDate;
+  String id;
+  String title;
+  String subject;
+  DateTime dueDate;
+  String description;
+  AssignmentStatus status;
+  Priority priority;
+  DateTime? completedDate;
+  String teacherUid;
+  String teacherName;
+  String classroomId;
+  String classroomName;
+  DateTime createdAt;
 
   Assignment({
     required this.id,
@@ -1012,7 +1587,30 @@ class Assignment {
     required this.status,
     required this.priority,
     this.completedDate,
+    required this.teacherUid,
+    required this.teacherName,
+    required this.classroomId,
+    required this.classroomName,
+    required this.createdAt,
   });
+
+  factory Assignment.fromMap(Map<String, dynamic> map) {
+    return Assignment(
+      id: map['id']?.toString() ?? '',
+      title: map['title']?.toString() ?? '',
+      subject: map['subject']?.toString() ?? '',
+      dueDate: (map['dueDate'] as Timestamp).toDate(),
+      description: map['description']?.toString() ?? '',
+      status: AssignmentStatus.values[map['status'] is int ? map['status'] : 0],
+      priority: Priority.values[map['priority'] is int ? map['priority'] : 1],
+      completedDate: map['completedDate'] != null ? (map['completedDate'] as Timestamp).toDate() : null,
+      teacherUid: map['teacherUid']?.toString() ?? '',
+      teacherName: map['teacherName']?.toString() ?? '',
+      classroomId: map['classroomId']?.toString() ?? '',
+      classroomName: map['classroomName']?.toString() ?? '',
+      createdAt: (map['createdAt'] as Timestamp).toDate(),
+    );
+  }
 
   Assignment copyWith({
     String? id,
@@ -1023,6 +1621,11 @@ class Assignment {
     AssignmentStatus? status,
     Priority? priority,
     DateTime? completedDate,
+    String? teacherUid,
+    String? teacherName,
+    String? classroomId,
+    String? classroomName,
+    DateTime? createdAt,
   }) {
     return Assignment(
       id: id ?? this.id,
@@ -1033,6 +1636,11 @@ class Assignment {
       status: status ?? this.status,
       priority: priority ?? this.priority,
       completedDate: completedDate ?? this.completedDate,
+      teacherUid: teacherUid ?? this.teacherUid,
+      teacherName: teacherName ?? this.teacherName,
+      classroomId: classroomId ?? this.classroomId,
+      classroomName: classroomName ?? this.classroomName,
+      createdAt: createdAt ?? this.createdAt,
     );
   }
 }
