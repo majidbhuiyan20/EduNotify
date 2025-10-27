@@ -6,7 +6,9 @@ import 'package:intl/intl.dart';
 import 'package:table_calendar/table_calendar.dart';
 
 class ScheduleScreen extends StatefulWidget {
-  const ScheduleScreen({super.key});
+  final String? selectedClassroomId;
+
+  const ScheduleScreen({super.key, this.selectedClassroomId});
 
   @override
   State<ScheduleScreen> createState() => _ScheduleScreenState();
@@ -23,6 +25,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
   String? _currentUserId;
   String? _userRole;
   bool _isLoading = true;
+  List<Map<String, dynamic>> _classrooms = [];
+  String? _selectedClassroomId;
 
   @override
   void initState() {
@@ -30,7 +34,19 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     _tabController = TabController(length: 2, vsync: this);
     _selectedDay = _focusedDay;
     _currentUserId = _auth.currentUser?.uid;
+    _selectedClassroomId = widget.selectedClassroomId;
     _loadUserData();
+  }
+
+  @override
+  void didUpdateWidget(ScheduleScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.selectedClassroomId != oldWidget.selectedClassroomId) {
+      setState(() {
+        _selectedClassroomId = widget.selectedClassroomId;
+      });
+      _loadClasses();
+    }
   }
 
   Future<void> _loadUserData() async {
@@ -42,14 +58,14 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     }
 
     try {
-      // Get user's role
       final userDoc = await _firestore.collection('users').doc(_currentUserId!).get();
       final userData = userDoc.data();
       setState(() {
         _userRole = userData?['role'] ?? 'Student';
       });
 
-      await _loadUserClasses();
+      await _loadClassrooms();
+      await _loadClasses();
     } catch (e) {
       print('Error loading user data: $e');
       setState(() {
@@ -58,7 +74,59 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     }
   }
 
-  Future<void> _loadUserClasses() async {
+  Future<void> _loadClassrooms() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    try {
+      List<Map<String, dynamic>> classrooms = [];
+
+      if (_userRole == 'Teacher' || _userRole == 'CR') {
+        final teacherClassrooms = await _firestore
+            .collection('classrooms')
+            .where('createdBy', isEqualTo: user.uid)
+            .where('isActive', isEqualTo: true)
+            .get();
+
+        for (final doc in teacherClassrooms.docs) {
+          classrooms.add({
+            'id': doc.id,
+            ...doc.data(),
+          });
+        }
+      } else if (_userRole == 'Student') {
+        final userDoc = await _firestore.collection('users').doc(user.uid).get();
+        final userData = userDoc.data();
+        final enrolledClassrooms = List<String>.from(userData?['enrolledClassrooms'] ?? []);
+
+        if (enrolledClassrooms.isNotEmpty) {
+          final studentClassrooms = await _firestore
+              .collection('classrooms')
+              .where(FieldPath.documentId, whereIn: enrolledClassrooms)
+              .where('isActive', isEqualTo: true)
+              .get();
+
+          for (final doc in studentClassrooms.docs) {
+            classrooms.add({
+              'id': doc.id,
+              ...doc.data(),
+            });
+          }
+        }
+      }
+
+      setState(() {
+        _classrooms = classrooms;
+        if (_selectedClassroomId == null && classrooms.isNotEmpty) {
+          _selectedClassroomId = classrooms.first['id'];
+        }
+      });
+    } catch (e) {
+      print('Error loading classrooms: $e');
+    }
+  }
+
+  Future<void> _loadClasses() async {
     if (_currentUserId == null) {
       setState(() {
         _isLoading = false;
@@ -67,48 +135,54 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     }
 
     try {
-      // Get user's enrolled classrooms
-      final userDoc = await _firestore.collection('users').doc(_currentUserId!).get();
-      final userData = userDoc.data();
-      final enrolledClassrooms = List<String>.from(userData?['enrolledClassrooms'] ?? []);
-
       List<ClassEvent> allClasses = [];
 
       if (_userRole == 'Teacher' || _userRole == 'CR') {
-        // Load classes created by this teacher
-        final teacherClasses = await _firestore
+        Query classesQuery = _firestore
             .collection('classes')
-            .where('teacherUid', isEqualTo: _currentUserId)
-            .get();
+            .where('teacherUid', isEqualTo: _currentUserId);
+
+        if (_selectedClassroomId != null && _selectedClassroomId!.isNotEmpty) {
+          classesQuery = classesQuery.where('classroomId', isEqualTo: _selectedClassroomId);
+        }
+
+        final teacherClasses = await classesQuery.get();
 
         for (final doc in teacherClasses.docs) {
           try {
-            final classEvent = ClassEvent.fromMap(doc.data());
+            final classEvent = ClassEvent.fromMap(doc.data() as Map<String, dynamic>);
             allClasses.add(classEvent);
           } catch (e) {
             print('Error processing teacher class: $e');
           }
         }
-      }
+      } else if (_userRole == 'Student') {
+        final userDoc = await _firestore.collection('users').doc(_currentUserId!).get();
+        final userData = userDoc.data();
+        final enrolledClassrooms = List<String>.from(userData?['enrolledClassrooms'] ?? []);
 
-      // Load classes from enrolled classrooms
-      for (final classroomId in enrolledClassrooms) {
-        try {
-          final classroomClasses = await _firestore
-              .collection('classes')
-              .where('classroomId', isEqualTo: classroomId)
-              .get();
+        final classroomsToLoad = _selectedClassroomId != null && _selectedClassroomId!.isNotEmpty
+            ? [_selectedClassroomId!]
+            : enrolledClassrooms;
 
-          for (final doc in classroomClasses.docs) {
-            try {
-              final classEvent = ClassEvent.fromMap(doc.data());
-              allClasses.add(classEvent);
-            } catch (e) {
-              print('Error processing enrolled class: $e');
+        for (final classroomId in classroomsToLoad) {
+          try {
+            final classroomClasses = await _firestore
+                .collection('classes')
+                .where('classroomId', isEqualTo: classroomId)
+                .get();
+
+            for (final doc in classroomClasses.docs) {
+              try {
+                final classEvent = ClassEvent.fromMap(doc.data());
+                allClasses.add(classEvent);
+              } catch (e) {
+                print('Error processing enrolled class: $e');
+              }
             }
+          } catch (e) {
+            print('Error loading classroom $classroomId: $e');
           }
-        } catch (e) {
-          print('Error loading classroom $classroomId: $e');
         }
       }
 
@@ -134,12 +208,18 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     }
   }
 
-  // Check if user can edit/delete classes - Students cannot edit/delete
+  void _onClassroomSelected(String? classroomId) {
+    setState(() {
+      _selectedClassroomId = classroomId;
+    });
+    _loadClasses();
+  }
+
   bool _canEditClass(ClassEvent event) {
     if (_userRole == 'Teacher' || _userRole == 'CR') {
       return event.teacherUid == _currentUserId;
     }
-    return false; // Students cannot edit
+    return false;
   }
 
   Future<void> _addClassToFirestore(ClassEvent event, DateTime date) async {
@@ -148,14 +228,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
       return;
     }
 
-    // Check permissions - Only Teachers/CRs can create classes
     if (_userRole != 'Teacher' && _userRole != 'CR') {
       _showErrorSnackBar('Only teachers and CRs can create classes');
       return;
     }
 
     try {
-      // Get user's classrooms
       final userClassrooms = await _firestore
           .collection('classrooms')
           .where('createdBy', isEqualTo: _currentUserId)
@@ -166,8 +244,18 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
         return;
       }
 
-      final classroomId = userClassrooms.docs.first.id;
-      final classroomData = userClassrooms.docs.first.data();
+      final classroomId = _selectedClassroomId ?? userClassrooms.docs.first.id;
+
+      DocumentSnapshot? classroomDoc;
+      try {
+        classroomDoc = userClassrooms.docs.firstWhere(
+              (doc) => doc.id == classroomId,
+        );
+      } catch (e) {
+        classroomDoc = userClassrooms.docs.first;
+      }
+
+      final classroomData = classroomDoc.data() as Map<String, dynamic>;
 
       final classData = {
         ...event.toMap(date),
@@ -185,11 +273,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
 
       print('Class added with ID: ${docRef.id}');
 
-      // Reload classes after adding
-      await _loadUserClasses();
-
-      // Show success message with class code
-      _showSuccessSnackBar('Class added successfully! Students can join with code: ${classroomData['classCode']}');
+      await _loadClasses();
+      _showSuccessSnackBar('Class added successfully to ${classroomData['className']}!');
 
     } catch (e) {
       print('Error adding class: $e');
@@ -205,14 +290,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
         for (int day in recurringDays) {
           DateTime classDate = startDate.add(Duration(days: (week * 7) + (day - startDate.weekday) % 7));
 
-          // Create a unique ID for each instance but keep track of the series
           final instanceClass = newClass.copyWith(
             id: '${newClass.id}_${classDate.millisecondsSinceEpoch}',
             baseClassId: newClass.id,
             isRecurring: true,
           );
 
-          // Add to Firestore first
           await _addClassToFirestore(instanceClass, classDate);
           totalClassesAdded++;
         }
@@ -229,7 +312,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     if (_currentUserId == null) return;
 
     try {
-      // Find the document ID for this class
       final snapshot = await _firestore
           .collection('classes')
           .where('teacherUid', isEqualTo: _currentUserId)
@@ -244,8 +326,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
         await snapshot.docs.first.reference.update(updateData);
         print('Class updated: ${event.id}');
 
-        // Reload classes after updating
-        await _loadUserClasses();
+        await _loadClasses();
       } else {
         print('No class found with id: ${event.id}');
         throw Exception('Class not found');
@@ -270,8 +351,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
         await snapshot.docs.first.reference.delete();
         print('Class deleted: $classId');
 
-        // Reload classes after deleting
-        await _loadUserClasses();
+        await _loadClasses();
       } else {
         print('No class found with id: $classId');
       }
@@ -283,7 +363,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
 
   Future<void> _rescheduleClass(ClassEvent originalClass, DateTime newDate, String newTime, String newLocation) async {
     try {
-      // Create rescheduled class record
       await _firestore.collection('rescheduled_classes').add({
         'originalClassId': originalClass.id,
         'className': originalClass.title,
@@ -301,7 +380,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
         'rescheduledAt': FieldValue.serverTimestamp(),
       });
 
-      // Update the original class
       final updatedClass = originalClass.copyWith(
         date: newDate,
         time: newTime,
@@ -372,210 +450,205 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
           ],
         ),
       )
-          : TabBarView(
-        controller: _tabController,
+          : Column(
         children: [
-          // Calendar View
-          Column(
-            children: [
-              TableCalendar(
-                firstDay: DateTime.now().subtract(const Duration(days: 30)),
-                lastDay: DateTime.now().add(const Duration(days: 180)),
-                focusedDay: _focusedDay,
-                calendarFormat: _calendarFormat,
-                eventLoader: _getEventsForDay,
-                selectedDayPredicate: (day) {
-                  return isSameDay(_selectedDay, day);
-                },
-                onDaySelected: (selectedDay, focusedDay) {
-                  setState(() {
-                    _selectedDay = selectedDay;
-                    _focusedDay = focusedDay;
-                  });
-                },
-                onFormatChanged: (format) {
-                  setState(() {
-                    _calendarFormat = format;
-                  });
-                },
-                onPageChanged: (focusedDay) {
-                  _focusedDay = focusedDay;
-                },
-                calendarStyle: CalendarStyle(
-                  todayDecoration: BoxDecoration(
-                    color: Colors.blue.withOpacity(0.3),
-                    shape: BoxShape.circle,
-                  ),
-                  selectedDecoration: const BoxDecoration(
-                    color: Colors.blue,
-                    shape: BoxShape.circle,
-                  ),
-                  markerDecoration: BoxDecoration(
-                    color: Colors.red,
-                    shape: BoxShape.circle,
-                  ),
-                  markersAutoAligned: true,
-                  markerSize: 6,
-                ),
-                headerStyle: HeaderStyle(
-                  formatButtonVisible: true,
-                  titleCentered: true,
-                  formatButtonShowsNext: false,
-                  formatButtonDecoration: BoxDecoration(
-                    color: Colors.blue,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  formatButtonTextStyle: const TextStyle(color: Colors.white),
-                ),
-              ),
-              const SizedBox(height: 16),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Row(
+          if (_classrooms.isNotEmpty) ...[
+            Card(
+              margin: EdgeInsets.all(12),
+              child: Padding(
+                padding: const EdgeInsets.all(12.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      DateFormat('EEEE, MMMM d').format(_selectedDay!),
-                      style: GoogleFonts.poppins(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
+                    Row(
+                      children: [
+                        Icon(Icons.school, size: 20, color: Colors.blue),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            'Classroom Filter',
+                            style: GoogleFonts.poppins(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                    const Spacer(),
-                    Text(
-                      '${events.length} classes',
-                      style: GoogleFonts.poppins(
-                        color: Colors.grey,
+                    SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      value: _selectedClassroomId,
+                      decoration: InputDecoration(
+                        border: OutlineInputBorder(),
+                        hintText: 'Select a classroom',
+                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                       ),
+                      items: [
+                        DropdownMenuItem<String>(
+                          value: null,
+                          child: Text('All Classrooms', style: GoogleFonts.poppins(), overflow: TextOverflow.ellipsis),
+                        ),
+                        ..._classrooms.map<DropdownMenuItem<String>>((classroom) {
+                          return DropdownMenuItem<String>(
+                            value: classroom['id'] as String?,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(
+                                  classroom['className'] as String, style: GoogleFonts.poppins(),
+                                  overflow: TextOverflow.ellipsis,),
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                      ],
+                      onChanged: _onClassroomSelected,
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 16),
-              Expanded(
-                child: events.isEmpty
-                    ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.event_available,
-                        size: 64,
-                        color: Colors.grey[300],
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'No classes scheduled',
-                        style: GoogleFonts.poppins(
-                          color: Colors.grey,
-                          fontSize: 18,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      if (_userRole == 'Teacher' || _userRole == 'CR')
-                        Text(
-                          'Tap + to add your first class',
-                          style: GoogleFonts.poppins(
-                            color: Colors.grey,
-                          ),
-                        )
-                      else
-                        Text(
-                          'Join a classroom to see classes',
-                          style: GoogleFonts.poppins(
-                            color: Colors.grey,
-                          ),
-                        ),
-                    ],
-                  ),
-                )
-                    : ListView.builder(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  itemCount: events.length,
-                  itemBuilder: (context, index) {
-                    return _buildClassItem(events[index], _selectedDay!);
-                  },
-                ),
-              ),
-            ],
-          ),
-
-          // List View
-          Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(
+            ),
+          ],
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                // Calendar View
+                Column(
                   children: [
-                    Text(
-                      'Upcoming Classes',
-                      style: GoogleFonts.poppins(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const Spacer(),
-                    IconButton(
-                      icon: const Icon(Icons.calendar_today),
-                      onPressed: () {
+                    TableCalendar(
+                      firstDay: DateTime.now().subtract(const Duration(days: 30)),
+                      lastDay: DateTime.now().add(const Duration(days: 180)),
+                      focusedDay: _focusedDay,
+                      calendarFormat: _calendarFormat,
+                      eventLoader: _getEventsForDay,
+                      selectedDayPredicate: (day) {
+                        return isSameDay(_selectedDay, day);
+                      },
+                      onDaySelected: (selectedDay, focusedDay) {
                         setState(() {
-                          _tabController.animateTo(0);
+                          _selectedDay = selectedDay;
+                          _focusedDay = focusedDay;
                         });
                       },
+                      onFormatChanged: (format) {
+                        setState(() {
+                          _calendarFormat = format;
+                        });
+                      },
+                      onPageChanged: (focusedDay) {
+                        _focusedDay = focusedDay;
+                      },
+                      calendarStyle: CalendarStyle(
+                        todayDecoration: BoxDecoration(
+                          color: Colors.blue.withOpacity(0.3),
+                          shape: BoxShape.circle,
+                        ),
+                        selectedDecoration: const BoxDecoration(
+                          color: Colors.blue,
+                          shape: BoxShape.circle,
+                        ),
+                        markerDecoration: BoxDecoration(
+                          color: Colors.red,
+                          shape: BoxShape.circle,
+                        ),
+                        markersAutoAligned: true,
+                        markerSize: 6,
+                      ),
+                      headerStyle: HeaderStyle(
+                        formatButtonVisible: true,
+                        titleCentered: true,
+                        formatButtonShowsNext: false,
+                        formatButtonDecoration: BoxDecoration(
+                          color: Colors.blue,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        formatButtonTextStyle: const TextStyle(color: Colors.white),
+                      ),
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.refresh),
-                      onPressed: _loadUserClasses,
-                      tooltip: 'Refresh',
+                    const SizedBox(height: 16),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Row(
+                        children: [
+                          Text(
+                            DateFormat('EEEE, MMMM d').format(_selectedDay!),
+                            style: GoogleFonts.poppins(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const Spacer(),
+                          Text(
+                            '${events.length} classes',
+                            style: GoogleFonts.poppins(
+                              color: Colors.grey,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Expanded(
+                      child: events.isEmpty
+                          ? _buildEmptyState()
+                          : ListView.builder(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        itemCount: events.length,
+                        itemBuilder: (context, index) {
+                          return _buildClassItem(events[index], _selectedDay!);
+                        },
+                      ),
                     ),
                   ],
                 ),
-              ),
-              Expanded(
-                child: _events.isEmpty
-                    ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.school,
-                        size: 64,
-                        color: Colors.grey[300],
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'No classes scheduled yet',
-                        style: GoogleFonts.poppins(
-                          color: Colors.grey,
-                          fontSize: 18,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      if (_userRole == 'Teacher' || _userRole == 'CR')
-                        Text(
-                          'Add your first class using the + button',
-                          style: GoogleFonts.poppins(
-                            color: Colors.grey,
+
+                // List View
+                Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Row(
+                        children: [
+                          Text(
+                            'Upcoming Classes',
+                            style: GoogleFonts.poppins(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
-                        )
-                      else
-                        Text(
-                          'Join a classroom to see classes',
-                          style: GoogleFonts.poppins(
-                            color: Colors.grey,
+                          const Spacer(),
+                          IconButton(
+                            icon: const Icon(Icons.calendar_today),
+                            onPressed: () {
+                              setState(() {
+                                _tabController.animateTo(0);
+                              });
+                            },
                           ),
-                        ),
-                    ],
-                  ),
-                )
-                    : ListView(
-                  children: _getUpcomingWeekEvents(),
+                          IconButton(
+                            icon: const Icon(Icons.refresh),
+                            onPressed: _loadClasses,
+                            tooltip: 'Refresh',
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: _events.isEmpty
+                          ? _buildEmptyState()
+                          : ListView(
+                        children: _getUpcomingWeekEvents(),
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ],
       ),
-      // Only show FAB for Teachers and CRs - Students cannot add classes
       floatingActionButton: (_userRole == 'Teacher' || _userRole == 'CR')
           ? FloatingActionButton(
         onPressed: () {
@@ -584,6 +657,44 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
         child: const Icon(Icons.add),
       )
           : null,
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.event_available,
+            size: 64,
+            color: Colors.grey[300],
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'No classes scheduled',
+            style: GoogleFonts.poppins(
+              color: Colors.grey,
+              fontSize: 18,
+            ),
+          ),
+          const SizedBox(height: 8),
+          if (_userRole == 'Teacher' || _userRole == 'CR')
+            Text(
+              'Tap + to add your first class',
+              style: GoogleFonts.poppins(
+                color: Colors.grey,
+              ),
+            )
+          else
+            Text(
+              'Join a classroom to see classes',
+              style: GoogleFonts.poppins(
+                color: Colors.grey,
+              ),
+            ),
+        ],
+      ),
     );
   }
 
@@ -724,7 +835,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
             ],
           ],
         ),
-        // Only show menu for Teachers/CRs - Students cannot edit/delete
         trailing: _canEditClass(event)
             ? PopupMenuButton<String>(
           icon: Icon(Icons.more_vert, color: Colors.grey[600]),
@@ -1189,7 +1299,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                     ),
                   ),
 
-                  // Show schedule settings only for series
                   if (isSeries) ...[
                     SizedBox(height: 16),
                     Divider(),
@@ -1293,7 +1402,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                       ),
                     ),
                   ] else if (!isEditing) ...[
-                    // For single class, show only date selection
                     SizedBox(height: 16),
                     Divider(),
                     SizedBox(height: 8),
@@ -1418,12 +1526,10 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
 
   Future<void> _editClassSeries(ClassEvent updatedClass, DateTime originalDate, DateTime newDate, List<int> recurringDays, int weeks) async {
     try {
-      // First remove all instances from Firestore
       await _deleteAllClassInstances(updatedClass.baseClassId);
 
-      // Then add the updated class with new schedule
       final updatedBaseClass = updatedClass.copyWith(
-        id: updatedClass.baseClassId, // Use the original base ID
+        id: updatedClass.baseClassId,
         isRecurring: true,
       );
 
@@ -1436,17 +1542,14 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
 
   Future<void> _editSingleClass(ClassEvent updatedClass, DateTime originalDate, DateTime newDate) async {
     try {
-      // Remove from original date in Firestore
       await _deleteClassFromFirestore(updatedClass.id);
 
-      // Add to new date with updated date
       final updatedInstance = updatedClass.copyWith(
         id: updatedClass.isRecurring
             ? '${updatedClass.baseClassId}_${newDate.millisecondsSinceEpoch}'
             : 'single_${newDate.millisecondsSinceEpoch}',
       );
 
-      // Add to Firestore
       await _addClassToFirestore(updatedInstance, newDate);
       _showSuccessSnackBar('Class updated successfully!');
     } catch (e) {
@@ -1471,8 +1574,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
       await batch.commit();
       print('Deleted ${snapshot.docs.length} instances of class: $baseClassId');
 
-      // Reload classes after deleting
-      await _loadUserClasses();
+      await _loadClasses();
     } catch (e) {
       print('Error deleting class series: $e');
       throw e;
