@@ -1,11 +1,10 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:edunotify/app/features/home_screen.dart';
 import 'package:edunotify/app/ui/add_class_room_screen.dart';
 import 'package:edunotify/app/ui/create_class_room_screen.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-
-// import '../features/home_screen.dart'; // No longer used
 
 class RoleSelectionScreen extends StatefulWidget {
   @override
@@ -285,6 +284,7 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
               await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
                 'email': user.email,
                 'role': selectedRole,
+                'displayName': user.displayName,
                 'createdAt': FieldValue.serverTimestamp(),
               }, SetOptions(merge: true));
 
@@ -292,13 +292,13 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
                 // Navigate to Create Classroom Screen
                 Navigator.pushReplacement(
                   context,
-                  MaterialPageRoute(builder: (context) => const CreateClassRoomScreen()),
+                  MaterialPageRoute(builder: (context) => const HomeScreen()),
                 );
               } else {
                 // Navigate to Add Classroom Screen for Students
                 Navigator.pushReplacement(
                   context,
-                  MaterialPageRoute(builder: (context) => const AddClassRoomScreen()),
+                  MaterialPageRoute(builder: (context) => const HomeScreen()),
                 );
               }
             } else {
@@ -339,6 +339,4 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
       selectedRole = role;
     });
   }
-
 }
-

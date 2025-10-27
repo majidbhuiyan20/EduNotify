@@ -14,7 +14,8 @@ class ScheduleScreen extends StatefulWidget {
   State<ScheduleScreen> createState() => _ScheduleScreenState();
 }
 
-class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProviderStateMixin {
+class _ScheduleScreenState extends State<ScheduleScreen>
+    with SingleTickerProviderStateMixin {
   late TabController _tabController;
   CalendarFormat _calendarFormat = CalendarFormat.week;
   DateTime _focusedDay = DateTime.now();
@@ -58,7 +59,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     }
 
     try {
-      final userDoc = await _firestore.collection('users').doc(_currentUserId!).get();
+      final userDoc =
+          await _firestore.collection('users').doc(_currentUserId!).get();
       final userData = userDoc.data();
       setState(() {
         _userRole = userData?['role'] ?? 'Student';
@@ -95,9 +97,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
           });
         }
       } else if (_userRole == 'Student') {
-        final userDoc = await _firestore.collection('users').doc(user.uid).get();
+        final userDoc =
+            await _firestore.collection('users').doc(user.uid).get();
         final userData = userDoc.data();
-        final enrolledClassrooms = List<String>.from(userData?['enrolledClassrooms'] ?? []);
+        final enrolledClassrooms =
+            List<String>.from(userData?['enrolledClassrooms'] ?? []);
 
         if (enrolledClassrooms.isNotEmpty) {
           final studentClassrooms = await _firestore
@@ -143,7 +147,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
             .where('teacherUid', isEqualTo: _currentUserId);
 
         if (_selectedClassroomId != null && _selectedClassroomId!.isNotEmpty) {
-          classesQuery = classesQuery.where('classroomId', isEqualTo: _selectedClassroomId);
+          classesQuery =
+              classesQuery.where('classroomId', isEqualTo: _selectedClassroomId);
         }
 
         final teacherClasses = await classesQuery.get();
@@ -151,20 +156,25 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
         for (final doc in teacherClasses.docs) {
           try {
             final classEvent = ClassEvent.fromMap(doc.data() as Map<String, dynamic>);
-            allClasses.add(classEvent);
+            if (_selectedClassroomId == null ||
+                classEvent.classroomId == _selectedClassroomId) {
+              allClasses.add(classEvent);
+            }
           } catch (e) {
             print('Error processing teacher class: $e');
           }
         }
       } else if (_userRole == 'Student') {
-        final userDoc = await _firestore.collection('users').doc(_currentUserId!).get();
+        final userDoc =
+            await _firestore.collection('users').doc(_currentUserId!).get();
         final userData = userDoc.data();
-        final enrolledClassrooms = List<String>.from(userData?['enrolledClassrooms'] ?? []);
+        final enrolledClassrooms =
+            List<String>.from(userData?['enrolledClassrooms'] ?? []);
 
-        final classroomsToLoad = _selectedClassroomId != null && _selectedClassroomId!.isNotEmpty
-            ? [_selectedClassroomId!]
-            : enrolledClassrooms;
-
+        final classroomsToLoad =
+            _selectedClassroomId != null && _selectedClassroomId!.isNotEmpty
+                ? [_selectedClassroomId!]
+                : enrolledClassrooms;
         for (final classroomId in classroomsToLoad) {
           try {
             final classroomClasses = await _firestore
@@ -189,7 +199,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
       setState(() {
         _events.clear();
         for (final classEvent in allClasses) {
-          final key = DateTime(classEvent.date.year, classEvent.date.month, classEvent.date.day);
+          final key = DateTime(
+              classEvent.date.year, classEvent.date.month, classEvent.date.day);
           if (_events.containsKey(key)) {
             _events[key]!.add(classEvent);
           } else {
@@ -198,7 +209,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
         }
         _isLoading = false;
       });
-
     } catch (e) {
       print('Error loading classes: $e');
       setState(() {
@@ -215,12 +225,36 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     _loadClasses();
   }
 
-  bool _canEditClass(ClassEvent event) {
+  // Update the _canEditClass method in ScheduleScreen to check for classroom teachers
+  Future<bool> _canEditClass(ClassEvent event) async {
     if (_userRole == 'Teacher' || _userRole == 'CR') {
-      return event.teacherUid == _currentUserId;
+      // Check if current user is the creator OR if they are a teacher in the same classroom
+      return event.teacherUid == _currentUserId ||
+          await _isTeacherInClassroom(event.classroomId);
     }
     return false;
   }
+
+// Add this method to check if user is a teacher in the classroom
+  Future<bool> _isTeacherInClassroom(String classroomId) async {
+    if (_currentUserId == null) return false;
+    if (classroomId.isEmpty) return false;
+
+    try {
+      final classroomDoc =
+          await _firestore.collection('classrooms').doc(classroomId).get();
+      if (classroomDoc.exists) {
+        final classroomData = classroomDoc.data() as Map<String, dynamic>;
+        final createdBy = classroomData['createdBy'] as String?;
+        return createdBy != null && createdBy == _currentUserId;
+      }
+    } catch (e) {
+      print('Error checking classroom creator: $e');
+    }
+
+    return false;
+  }
+
 
   Future<void> _addClassToFirestore(ClassEvent event, DateTime date) async {
     if (_currentUserId == null) {
@@ -234,28 +268,38 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     }
 
     try {
-      final userClassrooms = await _firestore
-          .collection('classrooms')
-          .where('createdBy', isEqualTo: _currentUserId)
-          .get();
+      String? classroomId;
+      Map<String, dynamic>? classroomData;
 
-      if (userClassrooms.docs.isEmpty) {
-        _showErrorSnackBar('Please create a classroom first');
+      if (_selectedClassroomId != null && _selectedClassroomId!.isNotEmpty) {
+        final classroomDoc = await _firestore
+            .collection('classrooms')
+            .doc(_selectedClassroomId!)
+            .get();
+        if (classroomDoc.exists) {
+          classroomId = classroomDoc.id;
+          classroomData = classroomDoc.data();
+        }
+      }
+
+      if (classroomId == null) {
+        final userClassrooms = await _firestore
+            .collection('classrooms')
+            .where('createdBy', isEqualTo: _currentUserId)
+            .get();
+        if (userClassrooms.docs.isEmpty) {
+          _showErrorSnackBar('Please create or select a classroom first.');
+          return;
+        }
+        classroomId = userClassrooms.docs.first.id;
+        classroomData = userClassrooms.docs.first.data();
+      }
+
+      if (classroomData == null) {
+        _showErrorSnackBar('Selected classroom not found.');
         return;
       }
 
-      final classroomId = _selectedClassroomId ?? userClassrooms.docs.first.id;
-
-      DocumentSnapshot? classroomDoc;
-      try {
-        classroomDoc = userClassrooms.docs.firstWhere(
-              (doc) => doc.id == classroomId,
-        );
-      } catch (e) {
-        classroomDoc = userClassrooms.docs.first;
-      }
-
-      final classroomData = classroomDoc.data() as Map<String, dynamic>;
 
       final classData = {
         ...event.toMap(date),
@@ -266,15 +310,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
       };
 
       print('Adding class to Firestore: $classData');
-
-      final docRef = await _firestore
-          .collection('classes')
-          .add(classData);
+      final docRef = await _firestore.collection('classes').add(classData);
 
       print('Class added with ID: ${docRef.id}');
 
       await _loadClasses();
-      _showSuccessSnackBar('Class added successfully to ${classroomData['className']}!');
+      _showSuccessSnackBar('Class added successfully to ${classroomData!['className']}!');
 
     } catch (e) {
       print('Error adding class: $e');
@@ -282,13 +323,15 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     }
   }
 
-  Future<void> _addClassSeries(ClassEvent newClass, DateTime startDate, List<int> recurringDays, int weeks) async {
+  Future<void> _addClassSeries(ClassEvent newClass, DateTime startDate,
+      List<int> recurringDays, int weeks) async {
     try {
       int totalClassesAdded = 0;
 
       for (int week = 0; week < weeks; week++) {
         for (int day in recurringDays) {
-          DateTime classDate = startDate.add(Duration(days: (week * 7) + (day - startDate.weekday) % 7));
+          DateTime classDate = startDate
+              .add(Duration(days: (week * 7) + (day - startDate.weekday) % 7));
 
           final instanceClass = newClass.copyWith(
             id: '${newClass.id}_${classDate.millisecondsSinceEpoch}',
@@ -301,8 +344,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
         }
       }
 
-      _showSuccessSnackBar('Class series added successfully! $totalClassesAdded classes scheduled for $weeks weeks.');
-
+      _showSuccessSnackBar(
+          'Class series added successfully! $totalClassesAdded classes scheduled for $weeks weeks.');
     } catch (e) {
       _showErrorSnackBar('Failed to add class series: $e');
     }
@@ -310,19 +353,21 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
 
   Future<void> _updateClassInFirestore(ClassEvent event, DateTime date) async {
     if (_currentUserId == null) return;
+    bool canEdit = await _canEditClass(event);
+    if (!canEdit) {
+      _showErrorSnackBar('You do not have permission to edit this class.');
+      return;
+    }
 
     try {
       final snapshot = await _firestore
           .collection('classes')
-          .where('teacherUid', isEqualTo: _currentUserId)
           .where('id', isEqualTo: event.id)
+          .limit(1)
           .get();
 
       if (snapshot.docs.isNotEmpty) {
-        final updateData = {
-          ...event.toMap(date),
-          'teacherUid': _currentUserId,
-        };
+        final updateData = event.toMap(date);
         await snapshot.docs.first.reference.update(updateData);
         print('Class updated: ${event.id}');
 
@@ -341,27 +386,38 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     if (_currentUserId == null) return;
 
     try {
-      final snapshot = await _firestore
-          .collection('classes')
-          .where('teacherUid', isEqualTo: _currentUserId)
-          .where('id', isEqualTo: classId)
-          .get();
-
-      if (snapshot.docs.isNotEmpty) {
-        await snapshot.docs.first.reference.delete();
-        print('Class deleted: $classId');
-
-        await _loadClasses();
-      } else {
+      final classDoc = await _firestore.collection('classes').where('id', isEqualTo: classId).limit(1).get();
+      if (classDoc.docs.isEmpty) {
         print('No class found with id: $classId');
+        return;
       }
+
+      final eventToDelete = ClassEvent.fromMap(classDoc.docs.first.data());
+      bool canDelete = await _canEditClass(eventToDelete);
+
+      if (!canDelete) {
+        _showErrorSnackBar('You do not have permission to delete this class.');
+        return; // Important: exit if no permission
+      }
+
+      await classDoc.docs.first.reference.delete();
+      print('Class deleted: $classId');
+
+      await _loadClasses();
+      _showSuccessSnackBar('Class deleted successfully!');
     } catch (e) {
       print('Error deleting class: $e');
       throw e;
     }
   }
 
-  Future<void> _rescheduleClass(ClassEvent originalClass, DateTime newDate, String newTime, String newLocation) async {
+  Future<void> _rescheduleClass(ClassEvent originalClass, DateTime newDate,
+      String newTime, String newLocation) async {
+    bool canReschedule = await _canEditClass(originalClass);
+    if (!canReschedule) {
+      _showErrorSnackBar('You do not have permission to reschedule this class.');
+      return;
+    }
     try {
       await _firestore.collection('rescheduled_classes').add({
         'originalClassId': originalClass.id,
@@ -388,8 +444,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
 
       await _updateClassInFirestore(updatedClass, newDate);
 
-      _showSuccessSnackBar('Class rescheduled successfully! Students will be notified.');
-
+      _showSuccessSnackBar(
+          'Class rescheduled successfully! Students will be notified.');
     } catch (e) {
       print('Error rescheduling class: $e');
       _showErrorSnackBar('Failed to reschedule class: $e');
@@ -441,23 +497,23 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
       ),
       body: _isLoading
           ? Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
-            Text('Loading classes...', style: GoogleFonts.poppins()),
-          ],
-        ),
-      )
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 16),
+                  Text('Loading classes...', style: GoogleFonts.poppins()),
+                ],
+              ),
+            )
           : Column(
-        children: [
-          if (_classrooms.isNotEmpty) ...[
-            Card(
-              margin: EdgeInsets.all(12),
-              child: Padding(
-                padding: const EdgeInsets.all(12.0),
-                child: Column(
+              children: [
+                if (_classrooms.isNotEmpty) ...[
+                  Card(
+                    margin: EdgeInsets.all(12),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12.0),
+                      child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
@@ -480,25 +536,30 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                       value: _selectedClassroomId,
                       decoration: InputDecoration(
                         border: OutlineInputBorder(),
-                        hintText: 'Select a classroom',
+                        hintText: 'Show All',
                         contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                       ),
                       items: [
                         DropdownMenuItem<String>(
                           value: null,
-                          child: Text('All Classrooms', style: GoogleFonts.poppins(), overflow: TextOverflow.ellipsis),
+                          child: Text('All My Classrooms',
+                              style: GoogleFonts.poppins(),
+                              overflow: TextOverflow.ellipsis),
                         ),
-                        ..._classrooms.map<DropdownMenuItem<String>>((classroom) {
+                        ..._classrooms
+                            .map<DropdownMenuItem<String>>((classroom) {
                           return DropdownMenuItem<String>(
-                            value: classroom['id'] as String?,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text(
-                                  classroom['className'] as String, style: GoogleFonts.poppins(),
-                                  overflow: TextOverflow.ellipsis,),
-                              ],
+                            value: classroom['id'],
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Text(
+                                      classroom['className'] as String,
+                                      style: GoogleFonts.poppins(),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ],
                             ),
                           );
                         }).toList(),
@@ -511,12 +572,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
             ),
           ],
           Expanded(
-            child: TabBarView(
+            child: TabBarView( // Added Expanded to constrain TabBarView
               controller: _tabController,
               children: [
                 // Calendar View
-                Column(
-                  children: [
+                SingleChildScrollView(
+                  child: Column(children: [
                     TableCalendar(
                       firstDay: DateTime.now().subtract(const Duration(days: 30)),
                       lastDay: DateTime.now().add(const Duration(days: 180)),
@@ -590,22 +651,22 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                       ),
                     ),
                     const SizedBox(height: 16),
-                    Expanded(
-                      child: events.isEmpty
-                          ? _buildEmptyState()
-                          : ListView.builder(
+                    events.isEmpty
+                        ? _buildEmptyState()
+                        : ListView.builder(
+                      physics: const NeverScrollableScrollPhysics(), // Important to avoid nested scroll issues
+                      shrinkWrap: true, // Important for ListView inside SingleChildScrollView
                         padding: const EdgeInsets.symmetric(horizontal: 16),
                         itemCount: events.length,
                         itemBuilder: (context, index) {
                           return _buildClassItem(events[index], _selectedDay!);
                         },
                       ),
-                    ),
                   ],
-                ),
-
+                ),),
                 // List View
-                Column(
+                SingleChildScrollView(
+                  child: Column(
                   children: [
                     Padding(
                       padding: const EdgeInsets.all(16),
@@ -635,27 +696,28 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                         ],
                       ),
                     ),
-                    Expanded(
-                      child: _events.isEmpty
-                          ? _buildEmptyState()
-                          : ListView(
+                    if (_events.isEmpty)
+                      _buildEmptyState()
+                    else
+                      ListView(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
                         children: _getUpcomingWeekEvents(),
                       ),
-                    ),
                   ],
                 ),
+                ),
               ],
-            ),
-          ),
-        ],
-      ),
+            ),),
+      ]),
+
       floatingActionButton: (_userRole == 'Teacher' || _userRole == 'CR')
           ? FloatingActionButton(
-        onPressed: () {
-          _showAddClassDialog();
-        },
-        child: const Icon(Icons.add),
-      )
+              onPressed: () {
+                _showAddClassDialog();
+              },
+              child: const Icon(Icons.add),
+            )
           : null,
     );
   }
@@ -835,81 +897,90 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
             ],
           ],
         ),
-        trailing: _canEditClass(event)
-            ? PopupMenuButton<String>(
-          icon: Icon(Icons.more_vert, color: Colors.grey[600]),
-          onSelected: (value) {
-            if (value == 'edit_single') {
-              _showEditSingleClassDialog(event: event, date: date);
-            } else if (value == 'edit_series' && event.isRecurring) {
-              _showEditSeriesDialog(event: event, date: date);
-            } else if (value == 'reschedule') {
-              _showRescheduleDialog(event: event, date: date);
-            } else if (value == 'delete') {
-              _showDeleteConfirmation(event, date);
-            } else if (value == 'delete_all' && event.isRecurring) {
-              _showDeleteAllConfirmation(event);
+        trailing: FutureBuilder<bool>(
+          future: _canEditClass(event),
+          builder:
+              (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.done && snapshot.data == true) {
+              return PopupMenuButton<String>(
+                icon: Icon(Icons.more_vert, color: Colors.grey[600]),
+                onSelected: (value) {
+                  if (value == 'edit_single') {
+                    _showEditSingleClassDialog(event: event, date: date);
+                  } else if (value == 'edit_series' && event.isRecurring) {
+                    _showEditSeriesDialog(
+                        event: event, date: date);
+                  } else if (value == 'reschedule') {
+                    _showRescheduleDialog(
+                        event: event, date: date);
+                  } else if (value == 'delete') {
+                    _showDeleteConfirmation(event, date);
+                  } else if (value == 'delete_all' && event.isRecurring) {
+                    _showDeleteAllConfirmation(event);
+                  }
+                },
+                itemBuilder: (BuildContext context) {
+                  List<PopupMenuItem<String>> items = [
+                    PopupMenuItem<String>(
+                      value: 'edit_single',
+                      child: Row(
+                        children: [
+                          Icon(Icons.edit, color: Colors.blue),
+                          SizedBox(width: 8),
+                          Text('Edit This Class'),
+                        ],
+                      ),
+                    ),
+                    if (event.isRecurring)
+                      PopupMenuItem<String>(
+                        value: 'edit_series',
+                        child: Row(
+                          children: [
+                            Icon(Icons.edit_calendar, color: Colors.green),
+                            SizedBox(width: 8),
+                            Text('Edit Entire Series'),
+                          ],
+                        ),
+                      ),
+                    PopupMenuItem<String>(
+                      value: 'reschedule',
+                      child: Row(
+                        children: [
+                          Icon(Icons.update, color: Colors.orange),
+                          SizedBox(width: 8),
+                          Text('Reschedule'),
+                        ],
+                      ),
+                    ),
+                    PopupMenuItem<String>(
+                      value: 'delete',
+                      child: Row(
+                        children: [
+                          Icon(Icons.delete, color: Colors.red),
+                          SizedBox(width: 8),
+                          Text('Delete This Class'),
+                        ],
+                      ),
+                    ),
+                    if (event.isRecurring)
+                      PopupMenuItem<String>(
+                        value: 'delete_all',
+                        child: Row(
+                          children: [
+                            Icon(Icons.delete_forever, color: Colors.red),
+                            SizedBox(width: 8),
+                            Text('Delete All Series'),
+                          ],
+                        ),
+                      ),
+                  ];
+                  return items;
+                },
+              );
             }
+            return const SizedBox.shrink();
           },
-          itemBuilder: (BuildContext context) {
-            List<PopupMenuItem<String>> items = [
-              PopupMenuItem<String>(
-                value: 'edit_single',
-                child: Row(
-                  children: [
-                    Icon(Icons.edit, color: Colors.blue),
-                    SizedBox(width: 8),
-                    Text('Edit This Class'),
-                  ],
-                ),
-              ),
-              if (event.isRecurring)
-                PopupMenuItem<String>(
-                  value: 'edit_series',
-                  child: Row(
-                    children: [
-                      Icon(Icons.edit_calendar, color: Colors.green),
-                      SizedBox(width: 8),
-                      Text('Edit Entire Series'),
-                    ],
-                  ),
-                ),
-              PopupMenuItem<String>(
-                value: 'reschedule',
-                child: Row(
-                  children: [
-                    Icon(Icons.update, color: Colors.orange),
-                    SizedBox(width: 8),
-                    Text('Reschedule'),
-                  ],
-                ),
-              ),
-              PopupMenuItem<String>(
-                value: 'delete',
-                child: Row(
-                  children: [
-                    Icon(Icons.delete, color: Colors.red),
-                    SizedBox(width: 8),
-                    Text('Delete This Class'),
-                  ],
-                ),
-              ),
-              if (event.isRecurring)
-                PopupMenuItem<String>(
-                  value: 'delete_all',
-                  child: Row(
-                    children: [
-                      Icon(Icons.delete_forever, color: Colors.red),
-                      SizedBox(width: 8),
-                      Text('Delete All Series'),
-                    ],
-                  ),
-                ),
-            ];
-            return items;
-          },
-        )
-            : null,
+        ),
         onTap: () {
           _showClassDetails(event, date);
         },
@@ -969,23 +1040,26 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
             onPressed: () => Navigator.pop(context),
             child: const Text('Close'),
           ),
-          if (_canEditClass(event)) ...[
-            TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-                _showEditSingleClassDialog(event: event, date: date);
-              },
-              child: const Text('Edit This Class'),
-            ),
-            if (event.isRecurring)
-              TextButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  _showEditSeriesDialog(event: event, date: date);
-                },
-                child: const Text('Edit Series'),
-              ),
-          ],
+          FutureBuilder<bool>(
+            future: _canEditClass(event),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.done && snapshot.data == true) {
+                return Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _showEditSingleClassDialog(event: event, date: date);
+                      },
+                      child: const Text('Edit'),
+                    ),
+                  ],
+                );
+              }
+              return const SizedBox.shrink();
+            }
+          ),
         ],
       ),
     );
@@ -1170,7 +1244,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
               ElevatedButton(
                 onPressed: () async {
                   if (timeController.text.isNotEmpty && locationController.text.isNotEmpty) {
-                    Navigator.pop(context);
+                      Navigator.pop(
+                          context);
                     await _rescheduleClass(event, tempSelectedDate, timeController.text, locationController.text);
                   }
                 },
@@ -1346,7 +1421,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                         final day = index + 1;
                         final isSelected = selectedDays.contains(day);
                         return FilterChip(
-                          label: Text(_getDayName(day)),
+                            label:
+                                Text(_getDayName(day)),
                           selected: isSelected,
                           onSelected: isEditing && !isSeries
                               ? null
@@ -1394,7 +1470,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                       items: [12, 16, 20, 24, 28, 32].map((weeks) {
                         return DropdownMenuItem<int>(
                           value: weeks,
-                          child: Text('$weeks weeks (${(weeks / 4).toStringAsFixed(1)} months)'),
+                          child: Text(
+                              '$weeks weeks (${(weeks / 4).toStringAsFixed(1)} months)'),
                         );
                       }).toList(),
                       decoration: InputDecoration(
@@ -1469,7 +1546,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                         );
 
                         if (isSeries) {
-                          await _editClassSeries(updatedClass, selectedDate, tempSelectedDate, selectedDays, selectedWeeks);
+                          await _editClassSeries(updatedClass, selectedDate,
+                              tempSelectedDate, selectedDays, selectedWeeks);
                         } else {
                           await _editSingleClass(updatedClass, selectedDate, tempSelectedDate);
                         }
@@ -1491,7 +1569,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                         );
 
                         if (isSeries) {
-                          await _addClassSeries(newClass, tempSelectedDate, selectedDays, selectedWeeks);
+                          await _addClassSeries(newClass, tempSelectedDate,
+                              selectedDays, selectedWeeks);
                         } else {
                           await _addClassToFirestore(newClass, tempSelectedDate);
                         }
@@ -1524,7 +1603,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     );
   }
 
-  Future<void> _editClassSeries(ClassEvent updatedClass, DateTime originalDate, DateTime newDate, List<int> recurringDays, int weeks) async {
+  Future<void> _editClassSeries(
+      ClassEvent updatedClass,
+      DateTime originalDate,
+      DateTime newDate,
+      List<int> recurringDays,
+      int weeks) async {
     try {
       await _deleteAllClassInstances(updatedClass.baseClassId);
 
@@ -1534,20 +1618,30 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
       );
 
       await _addClassSeries(updatedBaseClass, newDate, recurringDays, weeks);
-      _showSuccessSnackBar('Class series updated successfully! All instances have been rescheduled.');
+      _showSuccessSnackBar(
+          'Class series updated successfully! All instances have been rescheduled.');
     } catch (e) {
       _showErrorSnackBar('Failed to update class series: $e');
     }
   }
 
-  Future<void> _editSingleClass(ClassEvent updatedClass, DateTime originalDate, DateTime newDate) async {
+  Future<void> _editSingleClass(
+      ClassEvent updatedClass, DateTime originalDate, DateTime newDate) async {
     try {
       await _deleteClassFromFirestore(updatedClass.id);
 
+      String newId;
+      if (updatedClass.isRecurring) {
+        newId =
+            '${updatedClass.baseClassId}_${newDate.millisecondsSinceEpoch}';
+      } else {
+        final tempId = DateTime.now().millisecondsSinceEpoch.toString();
+        newId = 'single_$tempId';
+      }
+
       final updatedInstance = updatedClass.copyWith(
-        id: updatedClass.isRecurring
-            ? '${updatedClass.baseClassId}_${newDate.millisecondsSinceEpoch}'
-            : 'single_${newDate.millisecondsSinceEpoch}',
+        id: newId,
+        baseClassId: updatedClass.isRecurring ? updatedClass.baseClassId : newId,
       );
 
       await _addClassToFirestore(updatedInstance, newDate);
@@ -1563,14 +1657,31 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     try {
       final snapshot = await _firestore
           .collection('classes')
-          .where('teacherUid', isEqualTo: _currentUserId)
-          .where('baseClassId', isEqualTo: baseClassId)
+          .where('baseClassId', isEqualTo: baseClassId) // Find all instances
           .get();
 
+      if (snapshot.docs.isEmpty) {
+        print('No class series found for baseClassId: $baseClassId');
+        return;
+      }
+
       final batch = _firestore.batch();
+      bool hasPermission = true;
+
       for (final doc in snapshot.docs) {
+        final event = ClassEvent.fromMap(doc.data());
+        if (!await _canEditClass(event)) {
+          hasPermission = false;
+          break;
+        }
         batch.delete(doc.reference);
       }
+
+      if (!hasPermission) {
+        _showErrorSnackBar('You do not have permission to delete this series.');
+        return;
+      }
+
       await batch.commit();
       print('Deleted ${snapshot.docs.length} instances of class: $baseClassId');
 
@@ -1616,8 +1727,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
           TextButton(
             onPressed: () async {
               Navigator.pop(context);
-              await _deleteClassFromFirestore(event.id);
-              _showSuccessSnackBar('Class deleted successfully!');
+              await _deleteClassFromFirestore(event.id); // Snack bar is now inside this function
             },
             style: TextButton.styleFrom(foregroundColor: Colors.red),
             child: const Text('Delete'),

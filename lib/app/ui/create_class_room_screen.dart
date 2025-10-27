@@ -16,17 +16,88 @@ class CreateClassRoomScreen extends StatefulWidget {
 class _CreateClassRoomScreenState extends State<CreateClassRoomScreen> {
   final TextEditingController _classNameController = TextEditingController();
   final TextEditingController _classCodeController = TextEditingController();
+  final TextEditingController _subjectController = TextEditingController();
+  final TextEditingController _descriptionController = TextEditingController();
+  final TextEditingController _teacherEmailController = TextEditingController();
+
   final _formKey = GlobalKey<FormState>();
   bool _isCreating = false;
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
+  List<Map<String, dynamic>> _additionalTeachers = [];
+
   @override
   void dispose() {
     _classCodeController.dispose();
     _classNameController.dispose();
+    _subjectController.dispose();
+    _descriptionController.dispose();
+    _teacherEmailController.dispose();
     super.dispose();
+  }
+
+  Future<void> _addTeacherByEmail() async {
+    final email = _teacherEmailController.text.trim();
+    if (email.isEmpty) {
+      _showErrorDialog('Please enter a teacher email');
+      return;
+    }
+
+    if (email == _auth.currentUser?.email) {
+      _showErrorDialog('You cannot add yourself as a co-teacher');
+      return;
+    }
+
+    try {
+      // Check if teacher exists and has teacher/CR role
+      final users = await _firestore
+          .collection('users')
+          .where('email', isEqualTo: email)
+          .where('role', whereIn: ['Teacher', 'CR'])
+          .get();
+
+      if (users.docs.isEmpty) {
+        _showErrorDialog('No teacher or CR found with email: $email');
+        return;
+      }
+
+      final teacherDoc = users.docs.first;
+      final teacherData = teacherDoc.data();
+      final teacherId = teacherDoc.id;
+
+      // Check if teacher is already added
+      if (_additionalTeachers.any((teacher) => teacher['id'] == teacherId)) {
+        _showErrorDialog('Teacher already added to this classroom');
+        return;
+      }
+
+      setState(() {
+        _additionalTeachers.add({
+          'id': teacherId,
+          'name': teacherData['displayName'] ?? 'Teacher',
+          'email': email,
+          'role': teacherData['role'] ?? 'Teacher',
+        });
+        _teacherEmailController.clear();
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Teacher ${teacherData['displayName'] ?? email} added successfully'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      _showErrorDialog('Error adding teacher: $e');
+    }
+  }
+
+  void _removeTeacher(String teacherId) {
+    setState(() {
+      _additionalTeachers.removeWhere((teacher) => teacher['id'] == teacherId);
+    });
   }
 
   Future<void> _createClassroom() async {
@@ -55,17 +126,23 @@ class _CreateClassRoomScreenState extends State<CreateClassRoomScreen> {
           return;
         }
 
+        // Extract teacher IDs for the teachers array
+        final teacherIds = _additionalTeachers.map((teacher) => teacher['id'] as String).toList();
+
         // Create classroom document
         await _firestore.collection('classrooms').add({
           'className': _classNameController.text.trim(),
           'classCode': _classCodeController.text.trim().toUpperCase(),
+          'subject': _subjectController.text.trim(),
+          'description': _descriptionController.text.trim(),
           'createdBy': user.uid,
           'createdByEmail': user.email,
           'createdAt': FieldValue.serverTimestamp(),
           'teacherName': user.displayName ?? 'Unknown Teacher',
+          'teachers': teacherIds, // Array of teacher IDs
           'students': [], // Empty list for students to join
-          'assignments': [], // Empty list for assignments
           'isActive': true,
+          'lastUpdated': FieldValue.serverTimestamp(),
         });
 
         // Show success dialog
@@ -125,6 +202,29 @@ class _CreateClassRoomScreenState extends State<CreateClassRoomScreen> {
                   color: Colors.grey,
                 ),
               ),
+
+              // Show co-teachers if any
+              if (_additionalTeachers.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                const Text(
+                  'Co-Teachers Added:',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ..._additionalTeachers.map((teacher) => ListTile(
+                  dense: true,
+                  leading: CircleAvatar(
+                    radius: 16,
+                    child: Text(teacher['name'].toString().substring(0, 1)),
+                  ),
+                  title: Text(teacher['name']),
+                  subtitle: Text(teacher['email']),
+                )).toList(),
+              ],
+
               const SizedBox(height: 20),
               // Action Button
               SizedBox(
@@ -132,7 +232,7 @@ class _CreateClassRoomScreenState extends State<CreateClassRoomScreen> {
                 height: 50,
                 child: ElevatedButton(
                   onPressed: () {
-                    Navigator.pushReplacement(context, MaterialPageRoute(builder: (_)=> HomeScreen())); // Go back to previous screen
+                    Navigator.pushReplacement(context, MaterialPageRoute(builder: (_)=> HomeScreen()));
                   },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.green,
@@ -229,8 +329,20 @@ class _CreateClassRoomScreenState extends State<CreateClassRoomScreen> {
               _buildClassNameField(),
               const SizedBox(height: 20),
 
+              // Subject Field
+              _buildSubjectField(),
+              const SizedBox(height: 20),
+
               // Class Code Field
               _buildClassCodeField(),
+              const SizedBox(height: 20),
+
+              // Description Field
+              _buildDescriptionField(),
+              const SizedBox(height: 20),
+
+              // Add Co-Teachers Section
+              _buildCoTeachersSection(),
               const SizedBox(height: 32),
 
               // Create Classroom Button
@@ -429,6 +541,69 @@ class _CreateClassRoomScreenState extends State<CreateClassRoomScreen> {
     );
   }
 
+  Widget _buildSubjectField() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Subject',
+          style: TextStyle(
+            fontWeight: FontWeight.w600,
+            color: Colors.grey[700],
+            fontSize: 14,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.grey.withOpacity(0.1),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: TextFormField(
+            controller: _subjectController,
+            validator: (value) {
+              if (value == null || value.isEmpty) {
+                return 'Please enter a subject';
+              }
+              return null;
+            },
+            decoration: InputDecoration(
+              hintText: 'Computer Science, Mathematics, etc.',
+              prefixIcon: Container(
+                margin: const EdgeInsets.all(12),
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.green.shade50,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(Icons.subject, color: Colors.green.shade700, size: 20),
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: BorderSide.none,
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: BorderSide(color: Colors.green.shade400, width: 2),
+              ),
+              filled: true,
+              fillColor: Colors.white,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+            ),
+            style: const TextStyle(fontSize: 16),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildClassCodeField() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -510,6 +685,198 @@ class _CreateClassRoomScreenState extends State<CreateClassRoomScreen> {
             style: const TextStyle(fontSize: 16, letterSpacing: 1.2),
           ),
         ),
+      ],
+    );
+  }
+
+  Widget _buildDescriptionField() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Description (Optional)',
+          style: TextStyle(
+            fontWeight: FontWeight.w600,
+            color: Colors.grey[700],
+            fontSize: 14,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.grey.withOpacity(0.1),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: TextFormField(
+            controller: _descriptionController,
+            maxLines: 3,
+            decoration: InputDecoration(
+              hintText: 'Describe your classroom, course objectives, etc.',
+              prefixIcon: Container(
+                margin: const EdgeInsets.all(12),
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.orange.shade50,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(Icons.description, color: Colors.orange.shade700, size: 20),
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: BorderSide.none,
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: BorderSide(color: Colors.orange.shade400, width: 2),
+              ),
+              filled: true,
+              fillColor: Colors.white,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+            ),
+            style: const TextStyle(fontSize: 16),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCoTeachersSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Add Co-Teachers (Optional)',
+          style: TextStyle(
+            fontWeight: FontWeight.w600,
+            color: Colors.grey[700],
+            fontSize: 14,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Add other teachers who should have full access to this classroom',
+          style: TextStyle(
+            color: Colors.grey[600],
+            fontSize: 12,
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // Add Teacher Input
+        Row(
+          children: [
+            Expanded(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.grey.withOpacity(0.1),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: TextFormField(
+                  controller: _teacherEmailController,
+                  decoration: InputDecoration(
+                    hintText: 'Enter teacher email',
+                    prefixIcon: Container(
+                      margin: const EdgeInsets.all(12),
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.teal.shade50,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(Icons.person_add, color: Colors.teal.shade700, size: 20),
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide.none,
+                    ),
+                    filled: true,
+                    fillColor: Colors.white,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.teal.shade500,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.teal.shade300.withOpacity(0.3),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: IconButton(
+                onPressed: _addTeacherByEmail,
+                icon: const Icon(Icons.add, color: Colors.white),
+                tooltip: 'Add Teacher',
+              ),
+            ),
+          ],
+        ),
+
+        // Added Teachers List
+        if (_additionalTeachers.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          Text(
+            'Co-Teachers:',
+            style: TextStyle(
+              fontWeight: FontWeight.w600,
+              color: Colors.grey[700],
+              fontSize: 14,
+            ),
+          ),
+          const SizedBox(height: 8),
+          ..._additionalTeachers.map((teacher) => Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.withOpacity(0.1),
+                  blurRadius: 5,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: ListTile(
+              leading: CircleAvatar(
+                backgroundColor: Colors.teal.shade100,
+                child: Text(
+                  teacher['name'].toString().substring(0, 1),
+                  style: TextStyle(
+                    color: Colors.teal.shade800,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              title: Text(teacher['name']),
+              subtitle: Text('${teacher['email']} • ${teacher['role']}'),
+              trailing: IconButton(
+                icon: Icon(Icons.remove_circle, color: Colors.red.shade400),
+                onPressed: () => _removeTeacher(teacher['id']),
+                tooltip: 'Remove Teacher',
+              ),
+            ),
+          )).toList(),
+        ],
       ],
     );
   }
@@ -627,6 +994,8 @@ class _CreateClassRoomScreenState extends State<CreateClassRoomScreen> {
           _buildTipItem('Use a clear and descriptive class name'),
           _buildTipItem('Class codes must be unique and at least 4 characters'),
           _buildTipItem('Share the class code with students to join'),
+          _buildTipItem('Co-teachers will have full editing permissions'),
+          _buildTipItem('Only Teachers and CRs can be added as co-teachers'),
         ],
       ),
     );
