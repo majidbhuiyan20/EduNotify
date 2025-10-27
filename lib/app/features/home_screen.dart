@@ -291,6 +291,7 @@ class _HomeScreenState extends State<HomeScreen> {
           : null,
 
       drawer: Drawer(
+        width: MediaQuery.of(context).size.width * 0.75, // Responsive width
         child: ListView(
           padding: EdgeInsets.zero,
           children: [
@@ -298,49 +299,64 @@ class _HomeScreenState extends State<HomeScreen> {
               decoration: const BoxDecoration(
                 color: Colors.blue,
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  CircleAvatar(
-                    backgroundColor: Colors.white,
-                    child: Text(
-                      user?.displayName?.substring(0, 1) ?? 'U',
-                      style: GoogleFonts.poppins(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.blue,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    user?.displayName ?? 'User Name',
-                    style: GoogleFonts.poppins(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  Text(
-                    user?.email ?? 'user@email.com',
-                    style: GoogleFonts.poppins(
-                      color: Colors.white70,
-                    ),
-                  ),
-                  if (_userRole != null) ...[
-                    const SizedBox(height: 8),
-                    Chip(
-                      label: Text(
-                        _userRole!,
+              child: SingleChildScrollView(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    CircleAvatar(
+                      backgroundColor: Colors.white,
+                      radius: 30,
+                      child: Text(
+                        user?.displayName?.substring(0, 1) ?? 'U',
                         style: GoogleFonts.poppins(
-                          color: Colors.white,
-                          fontSize: 12,
+                          fontSize: 30,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.blue,
                         ),
                       ),
-                      backgroundColor: Colors.white.withOpacity(0.3),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            user?.displayName ?? 'User Name',
+                            style: GoogleFonts.poppins(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          Text(
+                            user?.email ?? 'user@email.com',
+                            style: GoogleFonts.poppins(
+                              color: Colors.white70,
+                            ),
+                          ),
+                          if (_userRole != null) ...[
+                            const SizedBox(height: 8),
+                            Chip(
+                              label: Text(
+                                _userRole!,
+                                style: GoogleFonts.poppins(
+                                    color: Colors.blue,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold),
+                              ),
+                              backgroundColor: Colors.white.withOpacity(0.3),
+                              materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 2),
+                            ),
+                          ],
+                        ],
+                      ),
                     ),
                   ],
-                ],
+                ),
               ),
             ),
             ListTile(
@@ -412,17 +428,17 @@ class _HomeScreenState extends State<HomeScreen> {
                   _navigateToAddClassroom();
                 },
               ),
+              ListTile(
+                leading: const Icon(Icons.group_add),
+                title: Text('Join Class', style: GoogleFonts.poppins()),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showJoinClassDialog();
+                },
+              ),
             ],
 
             const Divider(),
-            ListTile(
-              leading: const Icon(Icons.group_add),
-              title: Text('Join Class', style: GoogleFonts.poppins()),
-              onTap: () {
-                Navigator.pop(context);
-                _showJoinClassDialog();
-              },
-            ),
             ListTile(
               leading: const Icon(Icons.exit_to_app),
               title: Text('Logout', style: GoogleFonts.poppins()),
@@ -438,6 +454,15 @@ class _HomeScreenState extends State<HomeScreen> {
                 );
               },
             ),
+            if (_userRole != 'Teacher' && _userRole != 'CR')
+              ListTile(
+                leading: const Icon(Icons.group_add),
+                title: Text('Join Class', style: GoogleFonts.poppins()),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showJoinClassDialog();
+                },
+              ),
           ],
         ),
       ),
@@ -550,6 +575,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String _displayTitle = "Today's Classes";
   List<Map<String, dynamic>> _classrooms = [];
   String? _selectedClassroomId;
+  List<Map<String, dynamic>> _recentNotifications = [];
 
   @override
   void initState() {
@@ -557,6 +583,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _selectedClassroomId = widget.selectedClassroomId;
     _loadClassrooms();
     _loadClasses();
+    _loadRecentNotifications();
   }
 
   @override
@@ -565,6 +592,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (widget.selectedClassroomId != oldWidget.selectedClassroomId) {
       _selectedClassroomId = widget.selectedClassroomId;
       _loadClasses();
+      _loadRecentNotifications();
     }
   }
 
@@ -576,16 +604,38 @@ class _DashboardScreenState extends State<DashboardScreen> {
       List<Map<String, dynamic>> classrooms = [];
 
       if (widget.userRole == 'Teacher' || widget.userRole == 'CR') {
+        // For teachers and CRs, show both created and joined classrooms
         final teacherClassrooms = await _firestore
             .collection('classrooms')
             .where('createdBy', isEqualTo: user.uid)
             .where('isActive', isEqualTo: true)
             .get();
 
+        final userDoc = await _firestore.collection('users').doc(user.uid).get();
+        final userData = userDoc.data();
+        final enrolledClassrooms = List<String>.from(userData?['enrolledClassrooms'] ?? []);
+
+        if (enrolledClassrooms.isNotEmpty) {
+          final joinedClassrooms = await _firestore
+              .collection('classrooms')
+              .where(FieldPath.documentId, whereIn: enrolledClassrooms)
+              .where('isActive', isEqualTo: true)
+              .get();
+
+          for (final doc in joinedClassrooms.docs) {
+            classrooms.add({
+              'id': doc.id,
+              ...doc.data(),
+              'isJoined': true, // Mark as joined classroom
+            });
+          }
+        }
+
         for (final doc in teacherClassrooms.docs) {
           classrooms.add({
             'id': doc.id,
             ...doc.data(),
+            'isCreated': true, // Mark as created classroom
           });
         }
       } else if (widget.userRole == 'Student') {
@@ -767,12 +817,76 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  Future<void> _loadRecentNotifications() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    try {
+      List<Map<String, dynamic>> notifications = [];
+
+      // Load assignment notifications
+      final assignmentNotifications = await _firestore
+          .collection('assignments')
+          .where('dueDate', isGreaterThanOrEqualTo: Timestamp.now())
+          .orderBy('dueDate', descending: false)
+          .limit(3)
+          .get();
+
+      for (final doc in assignmentNotifications.docs) {
+        final data = doc.data();
+        notifications.add({
+          'type': 'assignment',
+          'title': 'New Assignment: ${data['title']}',
+          'description': 'Due: ${DateFormat('MMM d, yyyy').format((data['dueDate'] as Timestamp).toDate())}',
+          'icon': Icons.assignment,
+          'color': Colors.orange,
+          'timestamp': data['createdAt'] ?? Timestamp.now(),
+        });
+      }
+
+      // Load rescheduled class notifications
+      final rescheduledNotifications = await _firestore
+          .collection('rescheduled_classes')
+          .where('newDate', isGreaterThanOrEqualTo: Timestamp.now())
+          .orderBy('newDate', descending: false)
+          .limit(3)
+          .get();
+
+      for (final doc in rescheduledNotifications.docs) {
+        final data = doc.data();
+        notifications.add({
+          'type': 'rescheduled',
+          'title': 'Class Rescheduled: ${data['className']}',
+          'description': 'New time: ${data['newTime']} on ${DateFormat('MMM d, yyyy').format((data['newDate'] as Timestamp).toDate())}',
+          'icon': Icons.schedule,
+          'color': Colors.blue,
+          'timestamp': data['createdAt'] ?? Timestamp.now(),
+        });
+      }
+
+      // Sort notifications by timestamp
+      notifications.sort((a, b) => (b['timestamp'] as Timestamp).compareTo(a['timestamp'] as Timestamp));
+
+      // Take only the latest 3 notifications
+      if (notifications.length > 3) {
+        notifications = notifications.sublist(0, 3);
+      }
+
+      setState(() {
+        _recentNotifications = notifications;
+      });
+    } catch (e) {
+      print('Error loading notifications: $e');
+    }
+  }
+
   void _onClassroomSelected(String? classroomId) {
     setState(() {
       _selectedClassroomId = classroomId;
     });
     widget.onClassroomSelected(classroomId);
     _loadClasses();
+    _loadRecentNotifications();
   }
 
   Widget _buildRoleBasedActions() {
@@ -944,7 +1058,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _buildQuickActions(),
           const SizedBox(height: 24),
 
-          _buildNotificationsCard(),
+          if (_recentNotifications.isNotEmpty) ...[
+            _buildNotificationsCard(),
+            const SizedBox(height: 24),
+          ],
         ],
       ),
     );
@@ -1113,8 +1230,56 @@ class _DashboardScreenState extends State<DashboardScreen> {
               itemBuilder: (context, index) {
                 final classroom = classrooms[index];
                 final data = classroom.data() as Map<String, dynamic>;
-                return _buildClassroomListItem(data, classroom.id, true);
+                return _buildClassroomListItem(data, classroom.id, true, false);
               },
+            );
+          },
+        ),
+
+        // Show joined classrooms for CR/Teacher
+        StreamBuilder<DocumentSnapshot>(
+          stream: _firestore.collection('users').doc(user.uid).snapshots(),
+          builder: (context, userSnapshot) {
+            if (userSnapshot.connectionState == ConnectionState.waiting) {
+              return const SizedBox.shrink();
+            }
+            if (!userSnapshot.hasData || !userSnapshot.data!.exists) {
+              return const SizedBox.shrink();
+            }
+
+            final userData = userSnapshot.data!.data() as Map<String, dynamic>?;
+            final enrolledClassrooms = List<String>.from(userData?['enrolledClassrooms'] ?? []);
+
+            // Filter out classrooms that the user created
+            final joinedClassrooms = _classrooms.where((classroom) =>
+            enrolledClassrooms.contains(classroom['id']) && classroom['createdBy'] != user.uid).toList();
+
+            if (joinedClassrooms.isEmpty) {
+              return const SizedBox.shrink();
+            }
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 16),
+                Text(
+                  "Joined Classrooms",
+                  style: GoogleFonts.poppins(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ListView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: joinedClassrooms.length,
+                  itemBuilder: (context, index) {
+                    final classroom = joinedClassrooms[index];
+                    return _buildClassroomListItem(classroom, classroom['id'], false, true);
+                  },
+                ),
+              ],
             );
           },
         ),
@@ -1177,7 +1342,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   itemBuilder: (context, index) {
                     final classroom = classrooms[index];
                     final data = classroom.data() as Map<String, dynamic>;
-                    return _buildClassroomListItem(data, classroom.id, false);
+                    return _buildClassroomListItem(data, classroom.id, false, false);
                   },
                 );
               },
@@ -1188,25 +1353,34 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildClassroomListItem(Map<String, dynamic> data, String classroomId, bool isTeacher) {
+  Widget _buildClassroomListItem(Map<String, dynamic> data, String classroomId, bool isCreated, bool isJoined) {
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ListTile(
         leading: CircleAvatar(
-          backgroundColor: isTeacher ? Colors.blue.withOpacity(0.2) : Colors.green.withOpacity(0.2),
-          child: Icon(Icons.school, color: isTeacher ? Colors.blue : Colors.green),
+          backgroundColor: isCreated
+              ? Colors.blue.withOpacity(0.2)
+              : isJoined
+              ? Colors.orange.withOpacity(0.2)
+              : Colors.green.withOpacity(0.2),
+          child: Icon(
+            isCreated ? Icons.school : Icons.group,
+            color: isCreated ? Colors.blue : isJoined ? Colors.orange : Colors.green,
+          ),
         ),
         title: Text(
             data['className'],
             style: GoogleFonts.poppins(fontWeight: FontWeight.w500)
         ),
         subtitle: Text(
-          isTeacher
-              ? 'Class Code: ${data['classCode']}'
+          isCreated
+              ? 'Class Code: ${data['classCode']} (Created by you)'
+              : isJoined
+              ? 'Class Code: ${data['classCode']} (Joined)'
               : 'Created by: ${data['teacherName'] ?? 'Teacher'}',
           style: GoogleFonts.poppins(fontSize: 12),
         ),
-        trailing: isTeacher
+        trailing: (isCreated || isJoined)
             ? IconButton(
           icon: Icon(Icons.content_copy, size: 20),
           onPressed: () {
@@ -1222,7 +1396,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         )
             : null,
         onTap: () {
-          _showClassroomDetails(data, classroomId);
+          _showClassroomDetails(data, classroomId, isCreated, isJoined);
         },
       ),
     );
@@ -1249,7 +1423,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  void _showClassroomDetails(Map<String, dynamic> classroomData, String classroomId) {
+  void _showClassroomDetails(Map<String, dynamic> classroomData, String classroomId, bool isCreated, bool isJoined) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -1267,10 +1441,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
             _buildClassroomDetailRow(Icons.group, 'Students: ${List.from(classroomData['students'] ?? []).length}'),
             if (classroomData['description'] != null)
               _buildClassroomDetailRow(Icons.info, 'Description: ${classroomData['description']}'),
+            if (isCreated)
+              _buildClassroomDetailRow(Icons.star, 'Status: Classroom Creator'),
+            if (isJoined && !isCreated)
+              _buildClassroomDetailRow(Icons.group, 'Status: Joined Classroom'),
           ],
         ),
         actions: [
-          if (widget.userRole == 'Teacher' || widget.userRole == 'CR')
+          if (isCreated || isJoined)
             TextButton(
               onPressed: () {
                 Clipboard.setData(ClipboardData(text: classroomData['classCode']));
@@ -1631,17 +1809,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _buildQuickActions() {
     return Row(
       children: [
-        Expanded(
-          child: _buildQuickActionCard(
-            icon: Icons.add,
-            title: 'Add Class',
-            color: Colors.green,
-            onTap: () {
-              widget.onNavigate(1);
-            },
+        if (widget.userRole == 'Teacher' || widget.userRole == 'CR') ...[
+          Expanded(
+            child: _buildQuickActionCard(
+              icon: Icons.add,
+              title: 'Add Class',
+              color: Colors.green,
+              onTap: () {
+                widget.onNavigate(1);
+              },
+            ),
           ),
-        ),
-        const SizedBox(width: 12),
+          const SizedBox(width: 12),
+        ],
         Expanded(
           child: _buildQuickActionCard(
             icon: Icons.assignment,
@@ -1729,7 +1909,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
                 Chip(
                   label: Text(
-                    '3 New',
+                    '${_recentNotifications.length} New',
                     style: GoogleFonts.poppins(
                       color: Colors.white,
                       fontSize: 12,
@@ -1740,11 +1920,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ],
             ),
             const SizedBox(height: 16),
-            _buildNotificationItem('Class Rescheduled', 'Math class moved to Room 305', Icons.schedule, Colors.blue),
-            const Divider(),
-            _buildNotificationItem('New Assignment', 'CS Assignment 3 posted', Icons.assignment, Colors.orange),
-            const Divider(),
-            _buildNotificationItem('Test Reminder', 'Literature test this Friday', Icons.quiz, Colors.red),
+            ..._recentNotifications.map((notification) =>
+                _buildNotificationItem(
+                  notification['title'] as String,
+                  notification['description'] as String,
+                  notification['icon'] as IconData,
+                  notification['color'] as Color,
+                )
+            ),
             const SizedBox(height: 16),
             SizedBox(
               width: double.infinity,
@@ -1768,15 +1951,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildNotificationItem(String title, String subtitle, IconData icon, Color color) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: CircleAvatar(
-        backgroundColor: color.withOpacity(0.2),
-        child: Icon(icon, color: color),
-      ),
-      title: Text(title, style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
-      subtitle: Text(subtitle, style: GoogleFonts.poppins()),
-      trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+    return Column(
+      children: [
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: CircleAvatar(
+            backgroundColor: color.withOpacity(0.2),
+            child: Icon(icon, color: color),
+          ),
+          title: Text(title, style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
+          subtitle: Text(subtitle, style: GoogleFonts.poppins()),
+          trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+        ),
+        if (_recentNotifications.indexOf(_recentNotifications.firstWhere((n) => n['title'] == title)) != _recentNotifications.length - 1)
+          const Divider(),
+      ],
     );
   }
 
