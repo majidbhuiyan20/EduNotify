@@ -743,22 +743,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       List<ClassEvent> tomorrowClasses = [];
       List<ClassEvent> rescheduledClassList = [];
 
-      // Filter classes by date
-      for (final classEvent in allClasses) {
-        try {
-          final classDate = classEvent.date;
-          final classDateOnly = DateTime(classDate.year, classDate.month, classDate.day);
-
-          if (classDateOnly.isAtSameMomentAs(today)) {
-            todayClasses.add(classEvent);
-          } else if (classDateOnly.isAtSameMomentAs(tomorrow)) {
-            tomorrowClasses.add(classEvent);
-          }
-        } catch (e) {
-          print('Error processing class date: $e');
-        }
-      }
-
       // Process rescheduled classes
       for (final doc in rescheduledClasses.docs) {
         try {
@@ -784,6 +768,53 @@ class _DashboardScreenState extends State<DashboardScreen> {
         }
       }
 
+      // Filter rescheduled classes by selected classroom
+      List<ClassEvent> filteredRescheduledClasses;
+      if (_selectedClassroomId != null && _selectedClassroomId!.isNotEmpty) {
+        filteredRescheduledClasses = rescheduledClassList
+            .where((c) => c.classroomId == _selectedClassroomId)
+            .toList();
+      } else {
+        // If no classroom is selected, check against all classrooms the user is in.
+        final userClassroomIds = _classrooms.map((c) => c['id'] as String).toSet();
+        filteredRescheduledClasses = rescheduledClassList
+            .where((c) => userClassroomIds.contains(c.classroomId)).toList();
+      }
+
+      // Filter classes by date
+      for (final classEvent in allClasses) {
+        try {
+          final classDate = classEvent.date;
+          final classDateOnly = DateTime(classDate.year, classDate.month, classDate.day);
+
+          if (classDateOnly.isAtSameMomentAs(today)) {
+            todayClasses.add(classEvent);
+          } else if (classDateOnly.isAtSameMomentAs(tomorrow)) {
+            tomorrowClasses.add(classEvent);
+          }
+        } catch (e) {
+          print('Error processing class date: $e');
+        }
+      }
+
+      // Filter out past rescheduled classes from the main list.
+      final nowDateTime = DateTime.now();
+      rescheduledClassList.removeWhere((event) {
+        final eventDate = event.date;
+        final eventEndTime = _parseEndTime(event.time);
+
+        if (eventEndTime == null) {
+          // If we can't parse end time, keep it for safety, or you might decide to remove it.
+          // For now, let's assume it's valid if the date is today or in the future.
+          return eventDate.isBefore(today);
+        }
+
+        final eventEndDateTime = DateTime(eventDate.year, eventDate.month, eventDate.day, eventEndTime.hour, eventEndTime.minute);
+
+        // The event is in the past if its end time is before the current time.
+        return eventEndDateTime.isBefore(nowDateTime);
+      });
+
       // Filter out past classes for today
       final currentTime = TimeOfDay.fromDateTime(now);
       final filteredTodayClasses = todayClasses.where((classEvent) {
@@ -791,10 +822,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
         return classEndTime != null && _isTimeAfter(classEndTime, currentTime);
       }).toList();
 
+      // Filter out past classes for today
+      // final currentTime = TimeOfDay.fromDateTime(now);
+      // final filteredTodayClasses = todayClasses.where((classEvent) {
+      //   final classEndTime = _parseEndTime(classEvent.time);
+      //   return classEndTime != null && _isTimeAfter(classEndTime, currentTime);
+      // }).toList();
+
       setState(() {
         _todayClasses = filteredTodayClasses;
         _tomorrowClasses = tomorrowClasses;
-        _rescheduledClasses = rescheduledClassList;
+        _rescheduledClasses = filteredRescheduledClasses;
         _isLoading = false;
 
         // Set display title based on available classes

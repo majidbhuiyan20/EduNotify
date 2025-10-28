@@ -1225,14 +1225,18 @@ class _AddAssignmentDialogState extends State<AddAssignmentDialog> {
   String? _selectedClassroomId;
 
   final List<String> _subjects = [
-    'Mathematics',
-    'Literature',
-    'Computer Science',
-    'History',
-    'Physics',
-    'Biology',
-    'Chemistry',
-    'Geography',
+
+    'Data Structure',
+    'Algorithm',
+    'C Programming',
+    'Discrete Math',
+    'Differential Equation',
+    'Accounting',
+    'Basic Electronics',
+    'Cryptography',
+    'Software Engineering',
+    'Java',
+
   ];
 
   @override

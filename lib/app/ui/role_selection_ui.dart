@@ -22,6 +22,8 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
       ),
       child: Scaffold(
         body: Container(
+          width: double.infinity,
+          height: double.infinity,
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topCenter,
@@ -33,6 +35,7 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
             ),
           ),
           child: SafeArea(
+            bottom: false,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24.0),
               child: SingleChildScrollView(
@@ -52,6 +55,7 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
                     _buildRoleCards(),
                     // Continue Button
                     _buildContinueButton(),
+                    SizedBox(height: 20),
                   ],
                 ),
               ),

@@ -83,14 +83,25 @@ class _ScheduleScreenState extends State<ScheduleScreen>
     try {
       List<Map<String, dynamic>> classrooms = [];
 
-      if (_userRole == 'Teacher' || _userRole == 'CR') {
+      if (_userRole == 'Teacher') {
         final teacherClassrooms = await _firestore
             .collection('classrooms')
             .where('createdBy', isEqualTo: user.uid)
             .where('isActive', isEqualTo: true)
             .get();
-
         for (final doc in teacherClassrooms.docs) {
+          classrooms.add({
+            'id': doc.id,
+            ...doc.data(),
+          });
+        }
+      } else if (_userRole == 'CR') {
+        final crClassrooms = await _firestore
+            .collection('classrooms')
+            .where('cr', isEqualTo: user.uid)
+            .where('isActive', isEqualTo: true)
+            .get();
+        for (final doc in crClassrooms.docs) {
           classrooms.add({
             'id': doc.id,
             ...doc.data(),
@@ -1783,6 +1794,90 @@ class _ScheduleScreenState extends State<ScheduleScreen>
         )
     );
   }
+
+  void _showEditOptionsDialog(ClassEvent event, DateTime date) {
+    if (event.isRecurring) {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('Edit Recurring Class'),
+          content: Text(
+              'Do you want to edit only this instance or the entire series?'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _showEditSingleClassDialog(event: event, date: date);
+              },
+              child: Text('Edit This Instance'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _showEditSeriesDialog(event: event, date: date);
+              },
+              child: Text('Edit Series'),
+            ),
+          ],
+        ),
+      );
+    } else {
+      _showEditSingleClassDialog(event: event, date: date);
+    }
+  }
+
+  void _showDeleteOptionsDialog(ClassEvent event, DateTime date) {
+    if (event.isRecurring) {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('Delete Recurring Class'),
+          content: Text(
+              'Do you want to delete only this instance or the entire series?'),
+          actions: [
+            TextButton(
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              onPressed: () {
+                Navigator.pop(context);
+                _showDeleteConfirmation(event, date);
+              },
+              child: Text('Delete This Instance'),
+            ),
+            TextButton(
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              onPressed: () {
+                Navigator.pop(context);
+                _showDeleteAllConfirmation(event);
+              },
+              child: Text('Delete Series'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+          ],
+        ),
+      );
+    } else {
+      _showDeleteConfirmation(event, date);
+    }
+  }
+
+  Widget _buildEditButton(ClassEvent event, DateTime date) {
+    return FutureBuilder<bool>(
+        future: _canEditClass(event),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.done &&
+              snapshot.data == true) {
+            return IconButton(
+              icon: Icon(Icons.edit, color: Colors.blue),
+              onPressed: () => _showEditOptionsDialog(event, date),
+              tooltip: 'Edit Class',
+            );
+          }
+          return SizedBox.shrink();
+        });
+  }
 }
 
 class ClassEvent {
@@ -1899,3 +1994,13 @@ enum ClassType {
   discussion,
   seminar,
 }
+
+extension RoleBasedEditing on String {
+  bool get canEditSchedule {
+    return this == 'Teacher' || this == 'CR';
+  }
+}
+
+
+
+
